@@ -1,0 +1,29 @@
+# uTags Plugin Configuration
+
+# Default tag for new players
+default-tag: "member"
+
+# Database Configuration
+database:
+  schema: 2
+  host: "your_host"
+  port: 3306
+  database: "your_database"
+  username: "your_username"
+  password: "your_password"
+frame-material: BLACK_STAINED_GLASS_PANE
+previous-button:
+  slot: 45
+  material: ARROW
+  display-name: '&bPrevious Page'
+next-button:
+  slot: 53
+  material: ARROW
+  display-name: '&bNext Page'
+return-button:
+  slot: 48
+  material: BARRIER
+  display-name: '&cReturn to Main Menu'
+player-head-button:
+  slot: 50
+  display-name: '&aYour current tag'

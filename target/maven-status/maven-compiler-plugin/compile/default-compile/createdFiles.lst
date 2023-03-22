@@ -1,0 +1,6 @@
+com\blockworlds\utags\Tag.class
+com\blockworlds\utags\TagCommand.class
+com\blockworlds\utags\TagMenuManager.class
+com\blockworlds\utags\uTags.class
+com\blockworlds\utags\TagMenuListener.class
+com\blockworlds\utags\TagType.class

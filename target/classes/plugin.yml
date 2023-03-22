@@ -1,0 +1,25 @@
+name: UTags
+version: '1.0-SNAPSHOT'
+main: com.blockworlds.utags.uTags
+api-version: 1.19
+authors: [ Talabrek ]
+description: Tags that players can display in chat
+website: blockworlds.com
+
+depend:
+  - LuckPerms
+
+commands:
+  tag:
+    description: Opens the tag menu or sends a custom tag request
+    usage: /<command> [request] [tag]
+    permission: utags.tag
+    permission-message: You don't have permission to use this command.
+
+permissions:
+  utags.tag:
+    description: Allows the player to use the /tag command
+    default: true
+  utags.tagcolor:
+    description: Allows the player to change the color of their tag
+    default: false
