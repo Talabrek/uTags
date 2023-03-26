@@ -64,9 +64,9 @@ public class TagMenuListener implements Listener {
         if (inventoryTitle.contains("uTags Menu")) {
             handleTagMenuInteraction(event);
         } else if (inventoryTitle.contains("Select Prefix")) {
-            handleTagSelection(event, TagType.PREFIX, inventoryTitle.charAt(inventoryTitle.length() - 1));
+            handleTagSelection(event, TagType.PREFIX, Character.getNumericValue(inventoryTitle.charAt(inventoryTitle.length() - 1)));
         } else if (inventoryTitle.contains("Select Suffix")) {
-            handleTagSelection(event, TagType.SUFFIX, inventoryTitle.charAt(inventoryTitle.length() - 1));
+            handleTagSelection(event, TagType.SUFFIX, Character.getNumericValue(inventoryTitle.charAt(inventoryTitle.length() - 1)));
         }
     }
     public void openTagSelection(Player player, int pageIndex, TagType selectionType) {
@@ -88,7 +88,6 @@ public class TagMenuListener implements Listener {
         int itemsPerPage = 28;
         int startIndex = pageIndex * itemsPerPage;
         int endIndex = Math.min(startIndex + itemsPerPage, availableTags.size());
-
         int[] itemSlots = {10, 11, 12, 13, 14, 15, 16,
                 19, 20, 21, 22, 23, 24, 25,
                 28, 29, 30, 31, 32, 33, 34,
@@ -98,7 +97,7 @@ public class TagMenuListener implements Listener {
         for (int i = startIndex; i < endIndex; i++) {
             Tag tag = availableTags.get(i);
             // Check if the player has permission for the tag or if the tag is public
-            if (tag.isPublic() || player.hasPermission("utags.tag." + tag.getName())) {
+            if (tag.isPublic() && player.hasPermission("utags.tag." + tag.getName())) {
                 ItemStack prefixItem = tag.getMaterial();
                 ItemMeta prefixMeta = prefixItem.getItemMeta();
 
@@ -108,16 +107,15 @@ public class TagMenuListener implements Listener {
 
                 // Add the prefix item to the inventory
                 inventory.setItem(itemSlots[slotIndex], prefixItem);
-                plugin.getLogger().warning("Placing tag in slot " + itemSlots[slotIndex] + ", slot index: " + slotIndex);
                 slotIndex++;
             }
         }
-        addExtraMenuItems(player, inventory, pageIndex, availableTags.size(), itemsPerPage);
+        addExtraMenuItems(player, inventory, pageIndex, slotIndex, itemsPerPage);
     }
 
     private void addExtraMenuItems(Player player, Inventory inventory, int pageIndex, int numTags, int itemsPerPage) {
         addPlayerHead(player, inventory, 49);
-        if (pageIndex > 1) {
+        if (pageIndex > 0) {
             ItemStack prevPageItem = createNavigationArrow(ChatColor.AQUA + "Previous Page");
             inventory.setItem(45, prevPageItem);
         }
@@ -171,9 +169,9 @@ public class TagMenuListener implements Listener {
         String itemName = ChatColor.stripColor(clickedItem.getItemMeta().getDisplayName());
 
         if ("Change Prefix".equals(itemName)) {
-            openTagSelection(player, 1, TagType.PREFIX);
+            openTagSelection(player, 0, TagType.PREFIX);
         } else if ("Change Suffix".equals(itemName)) {
-            openTagSelection(player, 1, TagType.SUFFIX);
+            openTagSelection(player, 0, TagType.SUFFIX);
         }
     }
 
@@ -182,7 +180,7 @@ public class TagMenuListener implements Listener {
         ItemStack clickedItem = event.getCurrentItem();
 
         if (clickedItem != null && clickedItem.hasItemMeta()) {
-            String itemName = clickedItem.getItemMeta().getDisplayName();
+            String itemName = ChatColor.stripColor(clickedItem.getItemMeta().getDisplayName());
 
             if (itemName.equals("Previous Page")) {
                 openTagSelection(player, currentPage - 1, tagType);
@@ -196,34 +194,20 @@ public class TagMenuListener implements Listener {
         String tag = clickedItem.getItemMeta().getDisplayName();
 
         // Check if the tag is in the list of available tags and if the player has permission
-        boolean hasPermission = player.hasPermission("utags.tag." + tag);
+        boolean hasPermission = player.hasPermission("utags.tag." + plugin.getTagNameByDisplay(tag));
         boolean isAvailableTag = plugin.getAvailableTags(tagType).stream().anyMatch(availableTag -> availableTag.getDisplay().equals(tag));
 
         if (!hasPermission || !isAvailableTag) {
-            player.sendMessage(ChatColor.RED + "You don't have permission to use this title.");
+            player.sendMessage(ChatColor.RED + "You don't have permission to use this tag.");
             return;
         }
 
         // Update the player's LuckPerms prefix
-        setPlayerTag(player, tag, tagType);
+        plugin.setPlayerTag(player, tag, tagType);
 
         // Close the current inventory (Select Prefix) and inform the player
         player.closeInventory();
         player.sendMessage(ChatColor.GREEN + "Your " + tagType + " has been updated to: " + ChatColor.translateAlternateColorCodes('&', tag));
-    }
-
-    public void setPlayerTag(Player player, String tagName, TagType tagType) {
-        User user = plugin.getLuckPerms().getUserManager().getUser(player.getUniqueId());
-        if (user != null) {
-            if (tagType == TagType.PREFIX) {
-                user.data().clear(NodeType.PREFIX.predicate());
-                user.data().add(PrefixNode.builder(tagName, 10000).build());
-            } else {
-                user.data().clear(NodeType.SUFFIX.predicate());
-                user.data().add(SuffixNode.builder(tagName, 10000).build());
-            }
-            plugin.getLuckPerms().getUserManager().saveUser(user);
-        }
     }
 
     public Inventory createInventoryFrame(int size, String title, Material frameMaterial, Player player) {

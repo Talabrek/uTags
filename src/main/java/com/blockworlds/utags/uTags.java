@@ -2,9 +2,19 @@ package com.blockworlds.utags;
 
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
+import net.luckperms.api.model.user.User;
+import net.luckperms.api.node.Node;
+import net.luckperms.api.node.NodeType;
+import net.luckperms.api.node.types.PrefixNode;
+import net.luckperms.api.node.types.SuffixNode;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.io.BukkitObjectInputStream;
 import org.bukkit.util.io.BukkitObjectOutputStream;
@@ -16,6 +26,7 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.UUID;
 
 public class uTags extends JavaPlugin {
 
@@ -59,6 +70,7 @@ public class uTags extends JavaPlugin {
         getCommand("tag").setExecutor(tagCommand);
         getCommand("tag").setTabCompleter(tagCommand);
         getServer().getPluginManager().registerEvents(new TagMenuListener(this), this);
+        getServer().getPluginManager().registerEvents(new RequestMenuClickListener(this), this);
     }
 
     private void setupTagMenuManager() {
@@ -101,6 +113,11 @@ public class uTags extends JavaPlugin {
                             "`material` MEDIUMTEXT NOT NULL" +
                             ");"
             );
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS `tag_requests` ("
+                    + "`id` INT AUTO_INCREMENT PRIMARY KEY,"
+                    + "`player_uuid` VARCHAR(36) NOT NULL,"
+                    + "`player_name` VARCHAR(255) NOT NULL,"
+                    + "`tag_display` VARCHAR(255) NOT NULL);");
         }
     }
 
@@ -250,7 +267,7 @@ public class uTags extends JavaPlugin {
         return statement;
     }
 
-    public void purgeTable() {
+    public void purgeTagsTable() {
         try (Connection connection = getConnection();
              Statement statement = connection.createStatement()) {
             dropTagsTable(statement);
@@ -260,8 +277,23 @@ public class uTags extends JavaPlugin {
         }
     }
 
+    public void purgeRequestsTable() {
+        try (Connection connection = getConnection();
+             Statement statement = connection.createStatement()) {
+            dropRequestsTable(statement);
+            recreateRequestsTable(statement);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
     private void dropTagsTable(Statement statement) throws SQLException {
         String dropTableQuery = "DROP TABLE IF EXISTS tags";
+        statement.executeUpdate(dropTableQuery);
+    }
+
+    private void dropRequestsTable(Statement statement) throws SQLException {
+        String dropTableQuery = "DROP TABLE IF EXISTS tag_requests";
         statement.executeUpdate(dropTableQuery);
     }
 
@@ -274,6 +306,15 @@ public class uTags extends JavaPlugin {
                 "`color` BOOLEAN NOT NULL," +
                 "`material` MEDIUMTEXT NOT NULL" +
                 ");";
+        statement.executeUpdate(createTable);
+    }
+
+    private void recreateRequestsTable(Statement statement) throws SQLException {
+        String createTable = ("CREATE TABLE IF NOT EXISTS `tag_requests` ("
+                + "`id` INT AUTO_INCREMENT PRIMARY KEY,"
+                + "`player_uuid` VARCHAR(36) NOT NULL,"
+                + "`player_name` VARCHAR(255) NOT NULL,"
+                + "`tag_display` VARCHAR(255) NOT NULL);");
         statement.executeUpdate(createTable);
     }
 
@@ -319,5 +360,252 @@ public class uTags extends JavaPlugin {
     private void updateConfigSchemaVersion(int latestSchemaVersion) {
         getConfig().set("database.schema", latestSchemaVersion);
         saveConfig();
+    }
+
+    public void createCustomTagRequest(Player player, String tagDisplay) {
+        try (Connection connection = getConnection();
+             PreparedStatement checkExistingRequest = connection.prepareStatement(
+                     "SELECT * FROM tag_requests WHERE player_uuid = ?")) {
+
+            checkExistingRequest.setString(1, player.getUniqueId().toString());
+            ResultSet resultSet = checkExistingRequest.executeQuery();
+
+            if (resultSet.next()) {
+                player.sendMessage(ChatColor.RED + "You already have an active tag request.");
+                return;
+            }
+
+            try (PreparedStatement insertRequest = connection.prepareStatement(
+                    "INSERT INTO tag_requests (player_uuid, player_name, tag_display) VALUES (?, ?, ?)")) {
+
+                insertRequest.setString(1, player.getUniqueId().toString());
+                insertRequest.setString(2, player.getName());
+                insertRequest.setString(3, tagDisplay);
+                insertRequest.executeUpdate();
+                player.sendMessage(ChatColor.GREEN + "Your tag request has been submitted!");
+
+            } catch (SQLException e) {
+                e.printStackTrace();
+                player.sendMessage(ChatColor.RED + "An error occurred while submitting your tag request.");
+                return;
+            }
+
+        } catch (SQLException e) {
+            e.printStackTrace();
+            player.sendMessage(ChatColor.RED + "An error occurred while checking for existing requests.");
+            return;
+        }
+    }
+
+    public int countCustomTags(UUID playerUuid) {
+        // Count the number of custom tags for a player
+        try (Connection connection = getConnection();
+             PreparedStatement statement = connection.prepareStatement("SELECT COUNT(*) FROM tags WHERE name LIKE ?")) {
+
+            statement.setString(1, playerUuid.toString() + "%");
+            ResultSet resultSet = statement.executeQuery();
+            if (resultSet.next()) {
+                return resultSet.getInt(1);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return 0;
+    }
+
+    public List<CustomTagRequest> getCustomTagRequests() {
+        List<CustomTagRequest> requests = new ArrayList<>();
+        try (Connection connection = getConnection();
+             PreparedStatement statement = connection.prepareStatement("SELECT * FROM tag_requests");
+             ResultSet resultSet = statement.executeQuery()) {
+
+            while (resultSet.next()) {
+                int id = resultSet.getInt("id");
+                UUID playerUuid = UUID.fromString(resultSet.getString("player_uuid"));
+                String playerName = resultSet.getString("player_name");
+                String tagDisplay = resultSet.getString("tag_display");
+                requests.add(new CustomTagRequest(id, playerUuid, playerName, tagDisplay));
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return requests;
+    }
+
+    public CustomTagRequest getCustomTagRequestByPlayerName(String playerName) {
+        CustomTagRequest request = null;
+        try (Connection connection = getConnection()) {
+            PreparedStatement statement = connection.prepareStatement("SELECT * FROM tag_requests WHERE player_name = ?;");
+            statement.setString(1, playerName);
+            ResultSet resultSet = statement.executeQuery();
+            if (resultSet.next()) {
+                int id = resultSet.getInt("id");
+                UUID playerUuid = UUID.fromString(resultSet.getString("player_uuid"));
+                String display = resultSet.getString("tag_display");
+                request = new CustomTagRequest(id, playerUuid, playerName, display);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return request;
+    }
+
+    public void acceptCustomTagRequest(CustomTagRequest request) {
+        try (Connection connection = getConnection()) {
+            String permission = "utags.tag." + request.getPlayerName() + (countCustomTags(request.getPlayerUuid()) + 1);
+            User user = getLuckPerms().getUserManager().getUser(request.getPlayerUuid());
+            // Add the new tag to the tags table
+            addTagToDatabase(new Tag(request.getPlayerName() + (countCustomTags(request.getPlayerUuid()) + 1), request.getTagDisplay(), TagType.PREFIX, false, false, new ItemStack(Material.PLAYER_HEAD)));
+
+            // Remove the request from the tag_requests table
+            removeCustomRequestFromDatabase(request);
+            user.data().add(Node.builder(permission).build());
+            getLuckPerms().getUserManager().saveUser(user);
+            // Execute the configured command to notify the player
+            String command = getConfig().getString("accept-command", "mail send %player% Your custom tag request has been accepted!");
+            command = command.replace("%player%", request.getPlayerName());
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void removeCustomRequestFromDatabase(CustomTagRequest request) {
+        try (Connection connection = getConnection()) {
+            PreparedStatement statement = connection.prepareStatement("DELETE FROM tag_requests WHERE id = ?;");
+            statement.setInt(1, request.getId());
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void denyCustomTagRequest(CustomTagRequest request) {
+        try (Connection connection = getConnection()) {
+            PreparedStatement statement = connection.prepareStatement("DELETE FROM tag_requests WHERE id = ?;");
+            statement.setInt(1, request.getId());
+            statement.executeUpdate();
+            // Execute the configured command to notify the player
+            String command = getConfig().getString("deny-command", "mail send %player% Your custom tag request has been denied.");
+            command = command.replace("%player%", request.getPlayerName());
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void openRequestsMenu(Player player) {
+        List<CustomTagRequest> requests = new ArrayList<>();
+        try (Connection connection = getConnection()) {
+            PreparedStatement statement = connection.prepareStatement("SELECT * FROM tag_requests;");
+            ResultSet resultSet = statement.executeQuery();
+            while (resultSet.next()) {
+                int id = resultSet.getInt("id");
+                UUID playerUuid = UUID.fromString(resultSet.getString("player_uuid"));
+                String playerName = resultSet.getString("player_name");
+                String display = resultSet.getString("tag_display");
+                requests.add(new CustomTagRequest(id, playerUuid, playerName, display));
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        // Now create the inventory GUI and open it for the player
+        openRequestsMenu(player, requests);
+    }
+
+    public void openRequestsMenu(Player player, List<CustomTagRequest> requests) {
+        int size = 9 * (int) Math.ceil(requests.size() / 9.0);
+        if (size < 9)
+            size = 9;
+        Inventory inventory = Bukkit.createInventory(null, size, ChatColor.BLUE + "Custom Tag Requests");
+
+        for (CustomTagRequest request : requests) {
+            ItemStack item = new ItemStack(Material.PLAYER_HEAD);
+            SkullMeta skullMeta = (SkullMeta) item.getItemMeta();
+            skullMeta.setOwningPlayer(Bukkit.getOfflinePlayer(request.getPlayerUuid()));
+            skullMeta.setDisplayName(ChatColor.GREEN + request.getPlayerName());
+            List<String> lore = new ArrayList<>();
+            lore.add(ChatColor.GRAY + "Requested Tag: " + ChatColor.translateAlternateColorCodes('&', request.getTagDisplay()));
+            lore.add("");
+            lore.add(ChatColor.YELLOW + "Left-click to accept");
+            lore.add(ChatColor.RED + "Right-click to deny");
+            skullMeta.setLore(lore);
+            item.setItemMeta(skullMeta);
+            inventory.addItem(item);
+        }
+
+        player.openInventory(inventory);
+    }
+
+    public boolean editTagAttribute(String tagName, String attribute, String newValue) {
+        try (Connection connection = getConnection();
+             PreparedStatement statement = connection.prepareStatement("SELECT * FROM tags WHERE name = ?")) {
+            statement.setString(1, tagName);
+            ResultSet resultSet = statement.executeQuery();
+
+            if (!resultSet.next()) {
+                return false;
+            }
+
+            if (!attribute.equalsIgnoreCase("name") && !attribute.equalsIgnoreCase("display") && !attribute.equalsIgnoreCase("type") && !attribute.equalsIgnoreCase("public") && !attribute.equalsIgnoreCase("color") && !attribute.equalsIgnoreCase("material")) {
+                return false;
+            }
+
+            PreparedStatement updateStatement = connection.prepareStatement("UPDATE tags SET " + attribute + " = ? WHERE name = ?");
+            updateStatement.setString(1, newValue);
+            updateStatement.setString(2, tagName);
+            updateStatement.executeUpdate();
+            updateStatement.close();
+
+            return true;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public void setPlayerTag(Player player, String tagName, TagType tagType) {
+        User user = getLuckPerms().getUserManager().getUser(player.getUniqueId());
+        if (user != null) {
+            if (tagType == TagType.PREFIX) {
+                user.data().clear(NodeType.PREFIX.predicate());
+                user.data().add(PrefixNode.builder(tagName, 10000).build());
+            } else {
+                user.data().clear(NodeType.SUFFIX.predicate());
+                user.data().add(SuffixNode.builder(tagName, 10000).build());
+            }
+            getLuckPerms().getUserManager().saveUser(user);
+        }
+    }
+
+    public String getTagNameByDisplay(String display) {
+        String tagName = null;
+        try (Connection connection = getConnection()) {
+            PreparedStatement statement = connection.prepareStatement("SELECT * FROM tags WHERE display = ?;");
+            statement.setString(1, display);
+            ResultSet resultSet = statement.executeQuery();
+            if (resultSet.next()) {
+                tagName = resultSet.getString("name");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return tagName;
+    }
+
+    public String getTagDisplayByName(String name) {
+        String tagDisplay = null;
+        try (Connection connection = getConnection()) {
+            PreparedStatement statement = connection.prepareStatement("SELECT * FROM tags WHERE name = ?;");
+            statement.setString(1, name);
+            ResultSet resultSet = statement.executeQuery();
+            if (resultSet.next()) {
+                tagDisplay = resultSet.getString("display");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return tagDisplay;
     }
 }

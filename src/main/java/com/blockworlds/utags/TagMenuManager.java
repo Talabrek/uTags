@@ -9,7 +9,9 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 public class TagMenuManager {
     private final uTags plugin;
@@ -56,5 +58,30 @@ public class TagMenuManager {
         tagMenu.setItem(4, playerHead);
 
         player.openInventory(tagMenu);
+    }
+
+    public void openRequestsMenu(Player player) {
+        List<CustomTagRequest> requests = plugin.getCustomTagRequests();
+        int rows = (int) Math.ceil(requests.size() / 9.0);
+        Inventory requestsMenu = Bukkit.createInventory(player, rows * 9, "Tag Requests");
+
+        for (CustomTagRequest request : requests) {
+            ItemStack playerHead = new ItemStack(Material.PLAYER_HEAD);
+            SkullMeta meta = (SkullMeta) playerHead.getItemMeta();
+
+            if (meta != null) {
+                meta.setOwningPlayer(Bukkit.getOfflinePlayer(request.getPlayerUuid()));
+                meta.setDisplayName(ChatColor.translateAlternateColorCodes('&', request.getTagDisplay()));
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GREEN + "Left-click to accept");
+                lore.add(ChatColor.RED + "Right-click to deny");
+                meta.setLore(lore);
+                playerHead.setItemMeta(meta);
+            }
+
+            requestsMenu.addItem(playerHead);
+        }
+
+        player.openInventory(requestsMenu);
     }
 }

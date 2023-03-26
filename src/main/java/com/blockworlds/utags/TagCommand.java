@@ -42,27 +42,60 @@ public class TagCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        if (args.length == 2 && "help".equalsIgnoreCase(args[0])) {
-            displayHelp(player, 1);
-            return true;
-        }
+        switch (args[0].toLowerCase()) {
+            case "help":
+                if (args.length == 1) {
+                    displayHelp(player, 1);
+                } else {
+                    displayHelp(player, Integer.parseInt(args[1]));
+                }
+                break;
 
-        if (args.length > 2 && "help".equalsIgnoreCase(args[0])) {
-            displayHelp(player, Integer.parseInt(args[1]));
-            return true;
-        }
+            case "set":
+                if (args.length == 2) {
+                    boolean hasPermission = player.hasPermission("utags.tag." + args[1]);
+                    boolean isAvailableTag = plugin.getAvailableTags(TagType.PREFIX).stream().anyMatch(availableTag -> availableTag.getName().equals(args[1]));
 
-        if (args.length > 0 && args[0].equalsIgnoreCase("admin")) {
-            handleAdminCommands(player, args);
-            return true;
-        }
+                    if (!hasPermission || !isAvailableTag) {
+                        player.sendMessage(ChatColor.RED + "You don't have permission to use this tag.");
+                        return true;
+                    }
+                    plugin.setPlayerTag(player, plugin.getTagDisplayByName(args[1]), TagType.PREFIX);
+                    player.sendMessage(ChatColor.GREEN + "Your " + TagType.PREFIX + " has been updated to: " + ChatColor.translateAlternateColorCodes('&', plugin.getTagDisplayByName(args[1])));
+                } else {
+                    player.sendMessage(ChatColor.RED + "Invalid usage. Use /tag help for a list of available commands.");
+                }
+                break;
 
-        if (args.length == 2 && "request".equalsIgnoreCase(args[0])) {
-            //handleTagRequest(player, args[1]);
-            return true;
-        }
+            case "admin":
+                handleAdminCommands(player, args);
+                break;
 
-        player.sendMessage(ChatColor.RED + "Invalid usage. Use /tag help for a list of available commands.");
+            case "request":
+                if (args.length == 2) {
+                    int customTagCount = plugin.countCustomTags(player.getUniqueId());
+                    String requiredPermission = "utags.custom" + (customTagCount + 1);
+
+                    if (player.hasPermission(requiredPermission)) {
+                        String tagDisplay = args[1];
+                        plugin.createCustomTagRequest(player, tagDisplay);
+                        return true;
+                    } else {
+                        if (!requiredPermission.equalsIgnoreCase("utags.custom5"))
+                            player.sendMessage(ChatColor.RED + "You can't request any more custom tags, unlock more custom tag slots every month as a premium subscriber.");
+                        else
+                            player.sendMessage(ChatColor.RED + "You have reached the maximum number of custom tags.");
+                        return true;
+                    }
+                } else {
+                    player.sendMessage(ChatColor.RED + "Usage: /tag request [tagDisplay]");
+                }
+                break;
+
+            default:
+                player.sendMessage(ChatColor.RED + "Invalid usage. Use /tag help for a list of available commands.");
+                break;
+        }
         return true;
     }
 
@@ -72,15 +105,19 @@ public class TagCommand implements CommandExecutor, TabCompleter {
         helpLines.add(ChatColor.YELLOW + "Available commands:");
 
         // General help commands
-        helpLines.add(ChatColor.GREEN + "/tag - Open the tag menu.");
-        helpLines.add(ChatColor.GREEN + "/tag request [tag] - Request a custom tag.");
+        helpLines.add(ChatColor.GREEN + "/tag - Open the tag GUI menu.");
+        helpLines.add(ChatColor.GREEN + "/tag set [tag]- Quick set a prefix tag.");
+        helpLines.add(ChatColor.GREEN + "/tag request [tag] - Request a custom tag. (Requires Veteran or Premium Membership)");
 
         // Add admin commands only if the player has the appropriate permission
         if (player.hasPermission("utags.admin")) {
-            helpLines.add(ChatColor.RED + "Admin commands:");
-            helpLines.add(ChatColor.RED + "/tag admin create [name] [display] [type] [public] [color] - Create a new tag.");
-            helpLines.add(ChatColor.RED + "/tag admin delete [name] - Delete an existing tag.");
-            helpLines.add(ChatColor.RED + "/tag admin purge - Purge all tags from the database.");
+            helpLines.add(ChatColor.YELLOW + "Admin commands:");
+            helpLines.add(ChatColor.YELLOW + "/tag admin create [name] [display] [type] [public] [color] - Create a new tag.");
+            helpLines.add(ChatColor.YELLOW + "/tag admin delete [name] - Delete an existing tag.");
+            helpLines.add(ChatColor.YELLOW + "/tag admin edit [tagname] [attribute] [newvalue] - Edit an existing tag.");
+            helpLines.add(ChatColor.YELLOW + "/tag admin requests - View pending custom tag requests.");
+            helpLines.add(ChatColor.RED + "/tag admin purge tags - Purge all tags from the database.");
+            helpLines.add(ChatColor.RED + "/tag admin purge requests - Purge all custom tag requests from the database.");
         }
 
         int linesPerPage = 50;
@@ -117,9 +154,28 @@ public class TagCommand implements CommandExecutor, TabCompleter {
                 case "delete":
                     deleteTag(player, Arrays.copyOfRange(args, 2, args.length));
                     break;
+                case "edit":
+                    editTag(player, Arrays.copyOfRange(args, 2, args.length));
+                    break;
                 case "purge":
-                    plugin.purgeTable();
-                    player.sendMessage(ChatColor.RED + "All data has been purged from the tags table.");
+                    if (args.length >= 3) {
+                        switch (args[2].toLowerCase()) {
+                            case "tags":
+                                plugin.purgeTagsTable();
+                                player.sendMessage(ChatColor.RED + "All data has been purged from the tags table.");
+                                break;
+                            case "requests":
+                                plugin.purgeRequestsTable();
+                                player.sendMessage(ChatColor.RED + "All data has been purged from the requests table.");
+                                break;
+                            default:
+                                player.sendMessage(ChatColor.RED + "Invalid purge option. Use /tag admin help for a list of available commands.");
+                        }
+                    } else {
+                        player.sendMessage(ChatColor.RED + "Invalid purge option. Use /tag admin help for a list of available commands.");
+                    }
+                case "requests":
+                    plugin.openRequestsMenu(player);
                     break;
                 default:
                     displayAdminUsage(player);
@@ -133,6 +189,7 @@ public class TagCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.RED + "Usage: /tag admin create [name] [display] [type] [public] [color]");
         player.sendMessage(ChatColor.RED + "Usage: /tag admin delete [name]");
         player.sendMessage(ChatColor.RED + "Usage: /tag admin purge");
+
     }
 
     private void createTag(Player player, String[] args) {
@@ -201,7 +258,30 @@ public class TagCommand implements CommandExecutor, TabCompleter {
         // Delete the tag from the database
         plugin.deleteTagFromDatabase(name);
 
-        player.sendMessage(ChatColor.RED + "Tag '" + name + "' "+ ChatColor.RED + "has been deleted.");
+        player.sendMessage(ChatColor.RED + "Tag '" + name + "' " + ChatColor.RED + "has been deleted.");
+    }
+
+    private void editTag(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player)) {
+            sender.sendMessage(ChatColor.RED + "Only players can use this command.");
+            return;
+        }
+
+        if (args.length < 4) {
+            sender.sendMessage(ChatColor.RED + "Usage: /tag admin edit [tagname] [attribute] [newvalue]");
+            return;
+        }
+
+        String tagName = args[1];
+        String attribute = args[2];
+        String newValue = args[3];
+
+        if (!plugin.editTagAttribute(tagName, attribute, newValue)) {
+            sender.sendMessage(ChatColor.RED + "Failed to edit the tag. Please check the tag name, attribute, and new value.");
+            return;
+        }
+
+        sender.sendMessage(ChatColor.GREEN + "Successfully edited the tag.");
     }
 
     private boolean isValidBoolean(String value) {
@@ -212,25 +292,40 @@ public class TagCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> suggestions = new ArrayList<>();
 
+        if (!(sender instanceof Player)) {
+            return suggestions;
+        }
+
+        Player player = (Player) sender;
+
         if (args.length == 1) {
             suggestions.add("request");
-            if (sender instanceof Player && ((Player) sender).hasPermission("utags.admin")) {
+            suggestions.add("set");
+            if (player.hasPermission("utags.admin")) {
                 suggestions.add("admin");
             }
-        } else if (args.length >= 2 && "admin".equalsIgnoreCase(args[0])) {
-            if (sender instanceof Player && ((Player) sender).hasPermission("utags.admin")) {
-                if (args.length == 2) {
+        } else if (args.length == 2) {
+            if ("set".equalsIgnoreCase(args[0])) {
+                for (Tag tag : plugin.getAvailableTags(TagType.PREFIX)) {
+                    if (player.hasPermission("utags.tag." + tag.getName())) {
+                        suggestions.add(tag.getName());
+                    }
+                }
+            } else if ("admin".equalsIgnoreCase(args[0])) {
+                if (player.hasPermission("utags.admin")) {
                     suggestions.add("create");
                     suggestions.add("delete");
                     suggestions.add("purge");
-                } else if ("create".equalsIgnoreCase(args[1])) {
-                    if (args.length == 3){
+                }
+            }
+        } else if (args.length >= 3 && "admin".equalsIgnoreCase(args[0])) {
+            if (player.hasPermission("utags.admin")) {
+                if ("create".equalsIgnoreCase(args[1])) {
+                    if (args.length == 3) {
                         suggestions.add("TagName");
-                    }
-                    else if (args.length == 4) {
+                    } else if (args.length == 4) {
                         suggestions.add("[TagDisplay]");
-                    }
-                    else if (args.length == 5) {
+                    } else if (args.length == 5) {
                         suggestions.add("PREFIX");
                         suggestions.add("SUFFIX");
                         suggestions.add("BOTH");
@@ -239,7 +334,12 @@ public class TagCommand implements CommandExecutor, TabCompleter {
                         suggestions.add("false");
                     }
                 } else if ("delete".equalsIgnoreCase(args[1])) {
-                    suggestions.add("TagName");
+                    for (Tag tag : plugin.getAvailableTags(TagType.PREFIX)) {
+                        suggestions.add(tag.getName());
+                    }
+                    for (Tag tag : plugin.getAvailableTags(TagType.SUFFIX)) {
+                        suggestions.add(tag.getName());
+                    }
                 }
             }
         }
