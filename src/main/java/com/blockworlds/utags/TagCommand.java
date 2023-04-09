@@ -1,7 +1,6 @@
 package com.blockworlds.utags;
 
-import org.bukkit.ChatColor;
-import org.bukkit.Material;
+import org.bukkit.*;
 import org.bukkit.command.*;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -19,6 +18,8 @@ import org.bukkit.inventory.meta.SkullMeta;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class TagCommand implements CommandExecutor, TabCompleter {
     private static final int LINES_PER_PAGE = 50;
@@ -73,12 +74,36 @@ public class TagCommand implements CommandExecutor, TabCompleter {
 
             case "request":
                 if (args.length == 2) {
-                    int customTagCount = plugin.countCustomTags(player.getUniqueId());
+                    int customTagCount = plugin.countCustomTags(player.getName());
                     String requiredPermission = "utags.custom" + (customTagCount + 1);
-
+                    plugin.getLogger().info("Checking required permission for request: " + requiredPermission);
                     if (player.hasPermission(requiredPermission)) {
-                        String tagDisplay = args[1];
-                        plugin.createCustomTagRequest(player, tagDisplay);
+                        String requestedTag = args[1];
+                        String validationResult = isValidTag(requestedTag);
+                        if (validationResult != null) {
+                            player.sendMessage(ChatColor.RED + validationResult);
+                            if (validationResult.contains("color code")) {
+                                ChatColor[] colors = {ChatColor.BLACK, ChatColor.DARK_BLUE, ChatColor.DARK_GREEN, ChatColor.DARK_AQUA, ChatColor.DARK_RED, ChatColor.DARK_PURPLE, ChatColor.GOLD, ChatColor.GRAY, ChatColor.DARK_GRAY, ChatColor.BLUE, ChatColor.GREEN, ChatColor.AQUA, ChatColor.RED, ChatColor.LIGHT_PURPLE, ChatColor.YELLOW, ChatColor.WHITE};
+                                String[] colorCodes = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"};
+                                StringBuilder colorCodeList = new StringBuilder(ChatColor.AQUA + "List of available color codes: ");
+                                for (int i = 0; i < colors.length; i++) {
+                                    colorCodeList.append(colors[i]).append("&").append(colorCodes[i]).append(" ");
+                                }
+                                player.sendMessage(colorCodeList.toString().trim());
+                            }
+                            return true;
+                        }
+                        // Show the tag preview and prompt the player to accept or decline
+                        int endIndex = requestedTag.indexOf(']') + 1;
+                        if (endIndex < requestedTag.length()) {
+                            requestedTag = requestedTag.substring(0, endIndex);
+                        }
+                        player.sendMessage(ChatColor.GREEN + "Tag request preview: " + ChatColor.translateAlternateColorCodes('&', requestedTag));
+                        player.sendMessage(ChatColor.YELLOW + "Type 'accept' to accept the tag or 'decline' to try again.");
+
+                        // Register the preview listener
+                        plugin.addPreviewTag(player, requestedTag);
+                        //plugin.createCustomTagRequest(player, requestedTag);
                         return true;
                     } else {
                         if (!requiredPermission.equalsIgnoreCase("utags.custom5"))
@@ -88,7 +113,23 @@ public class TagCommand implements CommandExecutor, TabCompleter {
                         return true;
                     }
                 } else {
-                    player.sendMessage(ChatColor.RED + "Usage: /tag request [tagDisplay]");
+                    player.sendMessage(ChatColor.YELLOW + "Usage: /tag request [YourNewTag]");
+                    player.sendMessage(ChatColor.YELLOW + "You must follow these rules when requesting a custom tag:");
+                    player.sendMessage(ChatColor.YELLOW + "1. The tag must start with a color code.");
+                    player.sendMessage(ChatColor.YELLOW + "2. The tag must be surrounded by square brackets ([ and ]).");
+                    player.sendMessage(ChatColor.YELLOW + "3. The tag must be a maximum of 15 characters long.");
+                    player.sendMessage(ChatColor.YELLOW + "4. The tag must not contain any spaces.");
+                    player.sendMessage(ChatColor.YELLOW + "5. The tag must not contain any formatting codes (&k, &l, etc).");
+                    player.sendMessage(ChatColor.YELLOW + "6. The tag must not contain any invalid characters.");
+                    player.sendMessage(ChatColor.YELLOW + "7. Everything after the final square bracket will be ignored.");
+                    player.sendMessage(ChatColor.YELLOW + "A staff member will review your request and approve it if it meets the requirements.");
+                    ChatColor[] colors = {ChatColor.BLACK, ChatColor.DARK_BLUE, ChatColor.DARK_GREEN, ChatColor.DARK_AQUA, ChatColor.DARK_RED, ChatColor.DARK_PURPLE, ChatColor.GOLD, ChatColor.GRAY, ChatColor.DARK_GRAY, ChatColor.BLUE, ChatColor.GREEN, ChatColor.AQUA, ChatColor.RED, ChatColor.LIGHT_PURPLE, ChatColor.YELLOW, ChatColor.WHITE};
+                    String[] colorCodes = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"};
+                    StringBuilder colorCodeList = new StringBuilder(ChatColor.AQUA + "List of available color codes: ");
+                    for (int i = 0; i < colors.length; i++) {
+                        colorCodeList.append(colors[i]).append("&").append(colorCodes[i]).append(" ");
+                    }
+                    player.sendMessage(colorCodeList.toString().trim());
                 }
                 break;
 
@@ -112,7 +153,7 @@ public class TagCommand implements CommandExecutor, TabCompleter {
         // Add admin commands only if the player has the appropriate permission
         if (player.hasPermission("utags.admin")) {
             helpLines.add(ChatColor.YELLOW + "Admin commands:");
-            helpLines.add(ChatColor.YELLOW + "/tag admin create [name] [display] [type] [public] [color] - Create a new tag.");
+            helpLines.add(ChatColor.YELLOW + "/tag admin create [name] [display] [type] [weight] - Create a new tag.");
             helpLines.add(ChatColor.YELLOW + "/tag admin delete [name] - Delete an existing tag.");
             helpLines.add(ChatColor.YELLOW + "/tag admin edit [tagname] [attribute] [newvalue] - Edit an existing tag.");
             helpLines.add(ChatColor.YELLOW + "/tag admin requests - View pending custom tag requests.");
@@ -186,23 +227,22 @@ public class TagCommand implements CommandExecutor, TabCompleter {
     }
 
     private void displayAdminUsage(Player player) {
-        player.sendMessage(ChatColor.RED + "Usage: /tag admin create [name] [display] [type] [public] [color]");
+        player.sendMessage(ChatColor.RED + "Usage: /tag admin create [name] [display] [type] [weight]");
         player.sendMessage(ChatColor.RED + "Usage: /tag admin delete [name]");
         player.sendMessage(ChatColor.RED + "Usage: /tag admin purge");
-
+        player.sendMessage(ChatColor.RED + "Usage: /tag admin requests");
     }
 
     private void createTag(Player player, String[] args) {
-        if (args.length != 5) {
-            player.sendMessage(ChatColor.RED + "Usage: /tag admin create [name] [display] [type] [public] [color]");
+        if (args.length != 4) {
+            player.sendMessage(ChatColor.RED + "Usage: /tag admin create [name] [display] [type] [weight]");
             return;
         }
 
         String name = args[0];
         String display = ChatColor.translateAlternateColorCodes('&', args[1]);
         String typeString = args[2].toUpperCase();
-        String isPublicString = args[3];
-        String isColorString = args[4];
+        int weight = Integer.parseInt(args[3]);
         ItemStack material = player.getInventory().getItemInMainHand();
 
         if (!name.matches("^[a-zA-Z0-9_-]+$")) {
@@ -217,14 +257,9 @@ public class TagCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        // Check if the boolean values are valid
-        if (!isValidBoolean(isPublicString)) {
-            player.sendMessage(ChatColor.RED + "Invalid [public] value. It should be either 'true' or 'false'.");
-            return;
-        }
 
-        if (!isValidBoolean(isColorString)) {
-            player.sendMessage(ChatColor.RED + "Invalid [color] value. It should be either 'true' or 'false'.");
+        if (weight < 0) {
+            player.sendMessage(ChatColor.RED + "Invalid [weight] value. It should be a number greater than or equal to 0.");
             return;
         }
 
@@ -242,7 +277,7 @@ public class TagCommand implements CommandExecutor, TabCompleter {
         }
 
         // Add the new tag to the database
-        plugin.addTagToDatabase(new Tag(name, display, type, Boolean.parseBoolean(isPublicString), Boolean.parseBoolean(isColorString), material));
+        plugin.addTagToDatabase(new Tag(name, display, type, Boolean.TRUE, Boolean.TRUE, material, weight));
 
         player.sendMessage(ChatColor.GREEN + "Tag '" + name + "' - " + display + ChatColor.GREEN + " has been created.");
     }
@@ -288,6 +323,31 @@ public class TagCommand implements CommandExecutor, TabCompleter {
         return "true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value);
     }
 
+    private String isValidTag(String tag) {
+        String colorCodePattern = "(&[0-9a-fA-F])";
+        String invalidCodePattern = "(&[rRkKlLmMnNoO])";
+        String tagPattern = "^" + colorCodePattern + "\\[" + "(?:(?:" + colorCodePattern + "|.)*){0,15}" + "\\]" + ".*" + "$";
+        Pattern pattern = Pattern.compile(tagPattern);
+        Matcher matcher = pattern.matcher(tag);
+
+        if (!matcher.matches()) {
+            return "A valid tag must start with a color code (e.g., &d, &6) followed by '[' and end with ']'.";
+        }
+
+        if (tag.matches(".*" + invalidCodePattern + ".*")) {
+            return "A valid tag must not contain formatting codes such as &n or &k.";
+        }
+
+        String content = tag.substring(tag.indexOf('[') + 1, tag.length() - 1);
+        String contentWithoutColorCodes = content.replaceAll(colorCodePattern, "");
+
+        if (contentWithoutColorCodes.length() > 15) {
+            return "A valid tag must be between 1 and 15 characters long, excluding color codes.";
+        }
+
+        return null;
+    }
+
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> suggestions = new ArrayList<>();
@@ -329,9 +389,8 @@ public class TagCommand implements CommandExecutor, TabCompleter {
                         suggestions.add("PREFIX");
                         suggestions.add("SUFFIX");
                         suggestions.add("BOTH");
-                    } else if (args.length == 6 || args.length == 7) {
-                        suggestions.add("true");
-                        suggestions.add("false");
+                    } else if (args.length == 6) {
+                        suggestions.add("[number]");
                     }
                 } else if ("delete".equalsIgnoreCase(args[1])) {
                     for (Tag tag : plugin.getAvailableTags(TagType.PREFIX)) {

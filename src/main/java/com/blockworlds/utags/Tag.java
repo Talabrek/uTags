@@ -1,5 +1,9 @@
 package com.blockworlds.utags;
 
+import com.blockworlds.utags.TagType;
+import org.bukkit.Material;
+import org.bukkit.inventory.ItemStack;
+
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 
@@ -10,16 +14,18 @@ public class Tag {
     private TagType type;
     private boolean isPublic;
     private boolean color;
+    private int weight;
 
     private ItemStack material;
 
-    public Tag(String name, String display, TagType type, boolean isPublic, boolean color, ItemStack material) {
+    public Tag(String name, String display, TagType type, boolean isPublic, boolean color, ItemStack material, int weight) {
         this.name = name;
         this.display = display;
         this.type = type;
         this.isPublic = isPublic;
         this.color = color;
         this.material = material;
+        this.weight = weight;
     }
 
     public String getName() {
@@ -48,5 +54,13 @@ public class Tag {
 
     public void setMaterial(ItemStack material) {
         this.material = material;
+    }
+
+    public int getWeight() {
+        return weight;
+    }
+
+    public void setWeight(int weight) {
+        this.weight = weight;
     }
 }

@@ -23,10 +23,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
 public class uTags extends JavaPlugin {
 
@@ -36,6 +33,8 @@ public class uTags extends JavaPlugin {
     private String defaultTag;
     private LuckPerms luckPerms;
     private TagMenuManager tagMenuManager;
+
+    private Map<UUID, String> previewTags;
 
     @Override
     public void onEnable() {
@@ -66,13 +65,29 @@ public class uTags extends JavaPlugin {
     }
 
     private void registerCommandsAndEvents() {
+        previewTags = new HashMap<>();
         TagCommand tagCommand = new TagCommand(this);
         getCommand("tag").setExecutor(tagCommand);
         getCommand("tag").setTabCompleter(tagCommand);
         getServer().getPluginManager().registerEvents(new TagMenuListener(this), this);
         getServer().getPluginManager().registerEvents(new RequestMenuClickListener(this), this);
+        getServer().getPluginManager().registerEvents(new TagCommandPreviewListener(this), this);
+        getServer().getPluginManager().registerEvents(new LoginListener(this), this);
+        long delay = 5 * 60 * 20; // 5 minutes in ticks (20 ticks per second)
+        Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!getCustomTagRequests().isEmpty()) {
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    if (player.hasPermission("utags.staff")) {
+                        player.sendMessage(ChatColor.RED + "There are pending tag requests. Use " + ChatColor.YELLOW + "/tag admin requests" + ChatColor.RED + " to check them.");
+                    }
+                }
+            }
+        }, delay, delay);
     }
 
+    public boolean hasPendingTagRequests() {
+        return getCustomTagRequests() != null && !getCustomTagRequests().isEmpty();
+    }
     private void setupTagMenuManager() {
         this.tagMenuManager = new TagMenuManager(this);
     }
@@ -110,7 +125,8 @@ public class uTags extends JavaPlugin {
                             "`type` ENUM('prefix', 'suffix', 'both') NOT NULL," +
                             "`public` BOOLEAN NOT NULL," +
                             "`color` BOOLEAN NOT NULL," +
-                            "`material` MEDIUMTEXT NOT NULL" +
+                            "`material` MEDIUMTEXT NOT NULL," +
+                            "`weight` INT NOT NULL" +
                             ");"
             );
             statement.executeUpdate("CREATE TABLE IF NOT EXISTS `tag_requests` ("
@@ -186,11 +202,11 @@ public class uTags extends JavaPlugin {
 
     private ResultSet getTagsResultSet(TagType tagType, Statement statement) throws SQLException {
         if (tagType == TagType.PREFIX) {
-            return statement.executeQuery("SELECT * FROM tags WHERE type = 'prefix' OR type = 'both';");
+            return statement.executeQuery("SELECT * FROM tags WHERE type = 'prefix' OR type = 'both' ORDER BY weight DESC;");
         } else if (tagType == TagType.SUFFIX) {
-            return statement.executeQuery("SELECT * FROM tags WHERE type = 'suffix' OR type = 'both';");
+            return statement.executeQuery("SELECT * FROM tags WHERE type = 'suffix' OR type = 'both' ORDER BY weight DESC;");
         } else {
-            return statement.executeQuery("SELECT * FROM tags;");
+            return statement.executeQuery("SELECT * FROM tags ORDER BY weight DESC;");
         }
     }
 
@@ -201,8 +217,9 @@ public class uTags extends JavaPlugin {
         boolean isPublic = resultSet.getBoolean("public");
         boolean color = resultSet.getBoolean("color");
         ItemStack material = deserializeMaterial(resultSet.getString("material"));
+        int weight = resultSet.getInt("weight");
 
-        return new Tag(name, display, type, isPublic, color, material);
+        return new Tag(name, display, type, isPublic, color, material, weight);
     }
 
     private ItemStack deserializeMaterial(String base64Material) {
@@ -228,7 +245,7 @@ public class uTags extends JavaPlugin {
     }
 
     private PreparedStatement prepareInsertTagStatement(Connection connection, Tag tag) throws SQLException {
-        PreparedStatement statement = connection.prepareStatement("REPLACE INTO tags (name, display, type, public, color, material) VALUES (?, ?, ?, ?, ?, ?)");
+        PreparedStatement statement = connection.prepareStatement("REPLACE INTO tags (name, display, type, public, color, material, weight) VALUES (?, ?, ?, ?, ?, ?, ?)");
 
         statement.setString(1, tag.getName());
         statement.setString(2, tag.getDisplay());
@@ -236,7 +253,7 @@ public class uTags extends JavaPlugin {
         statement.setBoolean(4, tag.isPublic());
         statement.setBoolean(5, tag.isColor());
         statement.setString(6, serializeMaterial(tag.getMaterial()));
-
+        statement.setInt(7, tag.getWeight());
         return statement;
     }
 
@@ -304,7 +321,8 @@ public class uTags extends JavaPlugin {
                 "`type` ENUM('PREFIX', 'SUFFIX', 'BOTH') NOT NULL," +
                 "`public` BOOLEAN NOT NULL," +
                 "`color` BOOLEAN NOT NULL," +
-                "`material` MEDIUMTEXT NOT NULL" +
+                "`material` MEDIUMTEXT NOT NULL," +
+                "`weight` INT NOT NULL" +
                 ");";
         statement.executeUpdate(createTable);
     }
@@ -363,6 +381,12 @@ public class uTags extends JavaPlugin {
     }
 
     public void createCustomTagRequest(Player player, String tagDisplay) {
+
+        int endIndex = tagDisplay.indexOf(']') + 1;
+        if (endIndex < tagDisplay.length()) {
+            tagDisplay = tagDisplay.substring(0, endIndex);
+        }
+
         try (Connection connection = getConnection();
              PreparedStatement checkExistingRequest = connection.prepareStatement(
                      "SELECT * FROM tag_requests WHERE player_uuid = ?")) {
@@ -371,23 +395,35 @@ public class uTags extends JavaPlugin {
             ResultSet resultSet = checkExistingRequest.executeQuery();
 
             if (resultSet.next()) {
-                player.sendMessage(ChatColor.RED + "You already have an active tag request.");
-                return;
-            }
+                try (PreparedStatement updateRequest = connection.prepareStatement(
+                        "UPDATE tag_requests SET player_name = ?, tag_display = ? WHERE player_uuid = ?")) {
 
-            try (PreparedStatement insertRequest = connection.prepareStatement(
-                    "INSERT INTO tag_requests (player_uuid, player_name, tag_display) VALUES (?, ?, ?)")) {
+                    updateRequest.setString(1, player.getName());
+                    updateRequest.setString(2, tagDisplay);
+                    updateRequest.setString(3, player.getUniqueId().toString());
+                    updateRequest.executeUpdate();
 
-                insertRequest.setString(1, player.getUniqueId().toString());
-                insertRequest.setString(2, player.getName());
-                insertRequest.setString(3, tagDisplay);
-                insertRequest.executeUpdate();
-                player.sendMessage(ChatColor.GREEN + "Your tag request has been submitted!");
+                    player.sendMessage(ChatColor.GREEN + "Your existing tag request has been updated with the new one!");
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                    player.sendMessage(ChatColor.RED + "An error occurred while updating your tag request.");
+                    return;
+                }
+            } else {
+                try (PreparedStatement insertRequest = connection.prepareStatement(
+                        "INSERT INTO tag_requests (player_uuid, player_name, tag_display) VALUES (?, ?, ?)")) {
 
-            } catch (SQLException e) {
-                e.printStackTrace();
-                player.sendMessage(ChatColor.RED + "An error occurred while submitting your tag request.");
-                return;
+                    insertRequest.setString(1, player.getUniqueId().toString());
+                    insertRequest.setString(2, player.getName());
+                    insertRequest.setString(3, tagDisplay);
+                    insertRequest.executeUpdate();
+
+                    player.sendMessage(ChatColor.GREEN + "Your tag request has been submitted!");
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                    player.sendMessage(ChatColor.RED + "An error occurred while submitting your tag request.");
+                    return;
+                }
             }
 
         } catch (SQLException e) {
@@ -397,12 +433,12 @@ public class uTags extends JavaPlugin {
         }
     }
 
-    public int countCustomTags(UUID playerUuid) {
+    public int countCustomTags(String playerName) {
         // Count the number of custom tags for a player
         try (Connection connection = getConnection();
              PreparedStatement statement = connection.prepareStatement("SELECT COUNT(*) FROM tags WHERE name LIKE ?")) {
 
-            statement.setString(1, playerUuid.toString() + "%");
+            statement.setString(1, playerName + "%");
             ResultSet resultSet = statement.executeQuery();
             if (resultSet.next()) {
                 return resultSet.getInt(1);
@@ -452,19 +488,22 @@ public class uTags extends JavaPlugin {
 
     public void acceptCustomTagRequest(CustomTagRequest request) {
         try (Connection connection = getConnection()) {
-            String permission = "utags.tag." + request.getPlayerName() + (countCustomTags(request.getPlayerUuid()) + 1);
-            User user = getLuckPerms().getUserManager().getUser(request.getPlayerUuid());
+            String permission = "utags.tag." + request.getPlayerName() + (countCustomTags(request.getPlayerName()) + 1);
             // Add the new tag to the tags table
-            addTagToDatabase(new Tag(request.getPlayerName() + (countCustomTags(request.getPlayerUuid()) + 1), request.getTagDisplay(), TagType.PREFIX, false, false, new ItemStack(Material.PLAYER_HEAD)));
+            addTagToDatabase(new Tag(request.getPlayerName() + (countCustomTags(request.getPlayerName()) + 1), request.getTagDisplay(), TagType.PREFIX, false, false, new ItemStack(Material.PLAYER_HEAD),1));
 
             // Remove the request from the tag_requests table
             removeCustomRequestFromDatabase(request);
-            user.data().add(Node.builder(permission).build());
-            getLuckPerms().getUserManager().saveUser(user);
-            // Execute the configured command to notify the player
-            String command = getConfig().getString("accept-command", "mail send %player% Your custom tag request has been accepted!");
-            command = command.replace("%player%", request.getPlayerName());
-            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+            getLuckPerms().getUserManager().loadUser(request.getPlayerUuid()).thenAcceptAsync(user -> {
+                user.data().add(Node.builder(permission).build());
+                getLuckPerms().getUserManager().saveUser(user);
+
+                // Execute the configured command to notify the player
+                String command = getConfig().getString("accept-command", "mail send %player% Your custom tag request has been accepted!");
+                command = command.replace("%player%", request.getPlayerName());
+                String finalCommand = command;
+                Bukkit.getScheduler().runTask(this, () -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), finalCommand));
+            });
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -607,5 +646,14 @@ public class uTags extends JavaPlugin {
             e.printStackTrace();
         }
         return tagDisplay;
+    }
+
+    public void addPreviewTag(Player player, String tag) {
+        previewTags.put(player.getUniqueId(), tag);
+    }
+
+    public Map<UUID, String> getPreviewTags()
+    {
+        return previewTags;
     }
 }
