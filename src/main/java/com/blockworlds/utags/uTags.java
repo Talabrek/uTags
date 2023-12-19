@@ -19,11 +19,14 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.io.BukkitObjectInputStream;
 import org.bukkit.util.io.BukkitObjectOutputStream;
 
+import com.zaxxer.hikari.HikariDataSource;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.sql.*;
 import java.util.*;
+import com.zaxxer.hikari.HikariConfig; // Add missing import statement
 
 public class uTags extends JavaPlugin {
 
@@ -33,6 +36,7 @@ public class uTags extends JavaPlugin {
     private String defaultTag;
     private LuckPerms luckPerms;
     private TagMenuManager tagMenuManager;
+    private HikariDataSource dataSource;
 
     private Map<UUID, String> previewTags;
 
@@ -99,23 +103,27 @@ public class uTags extends JavaPlugin {
     }
 
     private void setupDatabase() {
+        HikariConfig config = new HikariConfig();
         host = getConfig().getString("database.host");
         port = getConfig().getInt("database.port");
         database = getConfig().getString("database.database");
         username = getConfig().getString("database.username");
         password = getConfig().getString("database.password");
+        config.setJdbcUrl("jdbc:mysql://" + host + ":" + port + "/" + database + "?autoReconnect=true");
+        config.setUsername(username);
+        config.setPassword(password);
 
-        try {
-            Class.forName("com.mysql.jdbc.Driver");
-            String url = "jdbc:mysql://" + host + ":" + port + "/" + database + "?autoReconnect=true";
-            getLogger().info("Attempting to connect to " + url);
-            connection = DriverManager.getConnection(url, username, password);
-            createTagsTableIfNotExists();
-        } catch (ClassNotFoundException | SQLException e) {
+        dataSource = new HikariDataSource(config);
+
+        try (Connection connection = dataSource.getConnection()) {
+            createTagsTableIfNotExists(connection); // Pass the connection parameter
+        } catch (SQLException e) {
             getLogger().severe("Error setting up the MySQL database: " + e.getMessage());
+            throw new RuntimeException(e);
         }
     }
-    private void createTagsTableIfNotExists() throws SQLException {
+
+    private void createTagsTableIfNotExists(Connection connection) throws SQLException {
         try (Statement statement = connection.createStatement()) {
             statement.executeUpdate(
                     "CREATE TABLE IF NOT EXISTS `tags` (" +
