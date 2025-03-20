@@ -20,23 +20,45 @@ public class TagMenuManager {
         this.plugin = plugin;
     }
 
+    /**
+     * Opens the main tag menu for a player
+     *
+     * @param player The player to open the menu for
+     */
     public void openTagMenu(Player player) {
-        Inventory tagMenu = Bukkit.createInventory(player, 9,  "uTags Menu");
+        Inventory tagMenu = Bukkit.createInventory(player, 9, "uTags Menu");
 
+        // Create prefix item
         ItemStack changePrefixItem = new ItemStack(Material.NAME_TAG);
         ItemMeta changePrefixMeta = changePrefixItem.getItemMeta();
         changePrefixMeta.setDisplayName(ChatColor.GREEN + "Change Prefix");
         changePrefixItem.setItemMeta(changePrefixMeta);
 
+        // Create suffix item
         ItemStack changeSuffixItem = new ItemStack(Material.NAME_TAG);
         ItemMeta changeSuffixMeta = changeSuffixItem.getItemMeta();
         changeSuffixMeta.setDisplayName(ChatColor.YELLOW + "Change Suffix");
         changeSuffixItem.setItemMeta(changeSuffixMeta);
 
+        // Add items to menu
         tagMenu.setItem(2, changePrefixItem);
         tagMenu.setItem(6, changeSuffixItem);
 
         // Add player's head to middle location
+        addPlayerHeadToMenu(player, tagMenu, 4);
+
+        // Open the menu for the player
+        player.openInventory(tagMenu);
+    }
+
+    /**
+     * Adds a player's head to the menu with current tag information
+     *
+     * @param player The player
+     * @param inventory The inventory to add the head to
+     * @param slot The slot to place the head
+     */
+    private void addPlayerHeadToMenu(Player player, Inventory inventory, int slot) {
         ItemStack playerHead = new ItemStack(Material.PLAYER_HEAD);
         SkullMeta playerHeadMeta = (SkullMeta) playerHead.getItemMeta();
         playerHeadMeta.setOwningPlayer(player);
@@ -55,14 +77,17 @@ public class TagMenuManager {
 
         playerHeadMeta.setLore(Arrays.asList(currentTitle.split("\n")));
         playerHead.setItemMeta(playerHeadMeta);
-        tagMenu.setItem(4, playerHead);
-
-        player.openInventory(tagMenu);
+        inventory.setItem(slot, playerHead);
     }
 
+    /**
+     * Opens the tag requests menu for a player
+     *
+     * @param player The player to open the menu for
+     */
     public void openRequestsMenu(Player player) {
         List<CustomTagRequest> requests = plugin.getCustomTagRequests();
-        int rows = (int) Math.ceil(requests.size() / 9.0);
+        int rows = Math.max(1, (int) Math.ceil(requests.size() / 9.0));
         Inventory requestsMenu = Bukkit.createInventory(player, rows * 9, "Tag Requests");
 
         for (CustomTagRequest request : requests) {
