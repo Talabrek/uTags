@@ -44,7 +44,9 @@ public class DatabaseManager {
         this.plugin = plugin;
         this.logger = plugin.getLogger();
         
-        // Load database credentials from config
+        // Load and validate database credentials from config
+        validateDatabaseConfig(plugin.getConfig());
+        
         this.host = plugin.getConfig().getString("database.host");
         this.port = plugin.getConfig().getInt("database.port");
         this.database = plugin.getConfig().getString("database.database");
@@ -57,7 +59,105 @@ public class DatabaseManager {
         // Create tables
         createTablesIfNotExist();
         
+        // Schedule periodic health checks
+        scheduleHealthChecks();
+        
         logger.info("DatabaseManager initialized successfully");
+    }
+    
+    /**
+     * Validates that all required database configuration parameters are present
+     * 
+     * @param config The plugin configuration
+     * @throws IllegalArgumentException If configuration is invalid
+     */
+    private void validateDatabaseConfig(org.bukkit.configuration.file.FileConfiguration config) {
+        // List of required database configuration parameters
+        String[] requiredParams = {
+            "database.host", "database.port", "database.database", 
+            "database.username", "database.password"
+        };
+        
+        List<String> missingParams = new ArrayList<>();
+        
+        // Check for missing or empty parameters
+        for (String param : requiredParams) {
+            if (!config.contains(param) || config.getString(param, "").isEmpty()) {
+                missingParams.add(param);
+            }
+        }
+        
+        // If any parameters are missing, throw an exception
+        if (!missingParams.isEmpty()) {
+            throw new IllegalArgumentException("Missing required database configuration parameters: " + 
+                                               String.join(", ", missingParams));
+        }
+        
+        // Validate port number
+        int port = config.getInt("database.port");
+        if (port <= 0 || port > 65535) {
+            throw new IllegalArgumentException("Invalid database port number. Must be between 1 and 65535.");
+        }
+        
+        logger.info("Database configuration validation successful");
+    }
+    
+    /**
+     * Schedules periodic health checks for the database connection pool
+     */
+    private void scheduleHealthChecks() {
+        // Run health check every 10 minutes (12000 ticks)
+        int healthCheckInterval = plugin.getConfig().getInt("database.health-check-interval", 12000);
+        
+        plugin.getServer().getScheduler().runTaskTimerAsynchronously(plugin, this::performHealthCheck, 
+                                                                   healthCheckInterval, healthCheckInterval);
+        
+        logger.info("Database health checks scheduled every " + (healthCheckInterval/20) + " seconds");
+    }
+    
+    /**
+     * Performs a health check on the database connection pool
+     */
+    private void performHealthCheck() {
+        try {
+            // Log current pool status
+            logPoolStatus();
+            
+            // Test a connection to verify database connectivity
+            try (Connection connection = getConnection()) {
+                try (PreparedStatement statement = connection.prepareStatement("SELECT 1");
+                     ResultSet resultSet = statement.executeQuery()) {
+                    if (resultSet.next()) {
+                        logger.info("Database health check successful");
+                    } else {
+                        logger.warning("Database health check received unexpected result");
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("Database health check failed: " + e.getMessage());
+            
+            // Attempt to refresh the connection pool if possible
+            attemptPoolRefresh();
+        }
+    }
+    
+    /**
+     * Attempts to refresh the connection pool in case of connectivity issues
+     */
+    private void attemptPoolRefresh() {
+        logger.warning("Attempting to refresh database connection pool...");
+        
+        try {
+            // Soft restart of the pool - HikariCP usually handles this automatically,
+            // but we can evict idle connections to force reconnection
+            if (dataSource.getHikariPoolMXBean() != null) {
+                dataSource.getHikariPoolMXBean().softEvictConnections();
+                logger.info("Connection pool refresh completed");
+            }
+        } catch (Exception e) {
+            logger.severe("Failed to refresh connection pool: " + e.getMessage());
+        }
     }
     
     /**
@@ -68,21 +168,50 @@ public class DatabaseManager {
     private HikariDataSource createDataSource() {
         HikariConfig config = new HikariConfig();
         
+        // Get configuration values from config.yml with defaults if not present
+        int maxPoolSize = plugin.getConfig().getInt("database.pool.max-size", 10);
+        int minIdle = plugin.getConfig().getInt("database.pool.min-idle", 3);
+        int idleTimeout = plugin.getConfig().getInt("database.pool.idle-timeout", 30000);
+        int connectionTimeout = plugin.getConfig().getInt("database.pool.connection-timeout", 10000);
+        int validationTimeout = plugin.getConfig().getInt("database.pool.validation-timeout", 5000);
+        int maxLifetime = plugin.getConfig().getInt("database.pool.max-lifetime", 1800000);
+        int leakDetectionThreshold = plugin.getConfig().getInt("database.pool.leak-detection-threshold", 30000);
+        int initializationFailTimeout = plugin.getConfig().getInt("database.pool.initialization-fail-timeout", 10000);
+        
+        // JDBC URL with connection parameters
+        StringBuilder jdbcUrl = new StringBuilder("jdbc:mysql://")
+            .append(host).append(":").append(port).append("/").append(database)
+            .append("?useSSL=false")
+            .append("&autoReconnect=true")
+            .append("&useUnicode=true")
+            .append("&characterEncoding=utf8")
+            .append("&connectTimeout=").append(connectionTimeout)
+            .append("&socketTimeout=").append(connectionTimeout * 2)
+            .append("&maxReconnects=10")
+            .append("&initialTimeout=2")
+            .append("&tcpKeepAlive=true");
+        
         // Basic configuration
-        config.setJdbcUrl("jdbc:mysql://" + host + ":" + port + "/" + database + "?useSSL=false&autoReconnect=true&useUnicode=true&characterEncoding=utf8");
+        config.setJdbcUrl(jdbcUrl.toString());
         config.setUsername(username);
         config.setPassword(password);
         
         // Pool configuration
-        config.setMaximumPoolSize(10);
-        config.setMinimumIdle(3);
-        config.setIdleTimeout(30000);
-        config.setConnectionTimeout(10000);
-        config.setValidationTimeout(5000);
-        config.setMaxLifetime(1800000);
+        config.setMaximumPoolSize(maxPoolSize);
+        config.setMinimumIdle(minIdle);
+        config.setIdleTimeout(idleTimeout);
+        config.setConnectionTimeout(connectionTimeout);
+        config.setValidationTimeout(validationTimeout);
+        config.setMaxLifetime(maxLifetime);
+        config.setLeakDetectionThreshold(leakDetectionThreshold);
+        config.setInitializationFailTimeout(initializationFailTimeout);
         
-        // Connection testing
+        // Auto-commit behavior
+        config.setAutoCommit(true);
+        
+        // Connection testing and initialization
         config.setConnectionTestQuery("SELECT 1");
+        config.setConnectionInitSql("SET NAMES utf8mb4");
         
         // Enable metrics gathering
         config.setRegisterMbeans(true);
@@ -90,64 +219,262 @@ public class DatabaseManager {
         // Set pool name for easier debugging
         config.setPoolName("uTags-HikariPool");
         
-        try {
-            return new HikariDataSource(config);
-        } catch (Exception e) {
-            logger.severe("Failed to create HikariCP data source: " + e.getMessage());
-            e.printStackTrace();
-            throw new RuntimeException("Failed to initialize database connection pool", e);
+        // Set custom properties
+        config.addDataSourceProperty("cachePrepStmts", "true");
+        config.addDataSourceProperty("prepStmtCacheSize", "250");
+        config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
+        config.addDataSourceProperty("useServerPrepStmts", "true");
+        config.addDataSourceProperty("useLocalSessionState", "true");
+        config.addDataSourceProperty("rewriteBatchedStatements", "true");
+        config.addDataSourceProperty("cacheResultSetMetadata", "true");
+        config.addDataSourceProperty("cacheServerConfiguration", "true");
+        config.addDataSourceProperty("elideSetAutoCommits", "true");
+        config.addDataSourceProperty("maintainTimeStats", "false");
+        
+        // Retry logic for initial connection
+        int maxRetries = 5;
+        int retryDelay = 2000; // milliseconds
+        Exception lastException = null;
+        
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                HikariDataSource dataSource = new HikariDataSource(config);
+                
+                // Test the connection to ensure it's working
+                try (Connection connection = dataSource.getConnection()) {
+                    try (Statement statement = connection.createStatement()) {
+                        try (ResultSet resultSet = statement.executeQuery("SELECT 1")) {
+                            if (resultSet.next()) {
+                                logger.info("Database connection established successfully after " + attempt + " attempt(s)");
+                                return dataSource;
+                            }
+                        }
+                    }
+                }
+                
+                // If we get here, connection worked but query failed, still return the datasource
+                logger.warning("Connection test query returned unexpected result, but connection was established");
+                return dataSource;
+                
+            } catch (Exception e) {
+                lastException = e;
+                logger.warning("Database connection attempt " + attempt + " of " + maxRetries + " failed: " + e.getMessage());
+                
+                if (attempt < maxRetries) {
+                    try {
+                        Thread.sleep(retryDelay * attempt); // Exponential backoff
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
         }
+        
+        // If we get here, all connection attempts failed
+        logger.severe("Failed to create database connection after " + maxRetries + " attempts");
+        if (lastException != null) {
+            lastException.printStackTrace();
+        }
+        throw new RuntimeException("Failed to initialize database connection pool", lastException);
     }
     
     /**
-     * Gets a connection from the connection pool
+     * Gets a connection from the connection pool with retry logic for transient failures
      * 
      * @return A database connection
      * @throws SQLException If a database access error occurs
      */
     public Connection getConnection() throws SQLException {
-        try {
-            return dataSource.getConnection();
-        } catch (SQLException e) {
-            logger.severe("Failed to get connection from pool: " + e.getMessage());
-            throw e;
+        // Number of retries for transient failures
+        int maxRetries = plugin.getConfig().getInt("database.connection-retries", 3);
+        int initialRetryDelayMs = plugin.getConfig().getInt("database.retry-delay-ms", 200);
+        
+        SQLException lastException = null;
+        
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                Connection connection = dataSource.getConnection();
+                
+                // Test if the connection is actually valid
+                if (connection.isValid(2)) { // 2 second timeout
+                    return connection;
+                } else {
+                    // Connection isn't valid, close it and try again
+                    try {
+                        connection.close();
+                    } catch (SQLException e) {
+                        // Ignore exceptions when closing an invalid connection
+                    }
+                    throw new SQLException("Retrieved connection is invalid");
+                }
+            } catch (SQLException e) {
+                lastException = e;
+                
+                // Only log the first failure as warning, the rest as fine to avoid log spam
+                if (attempt == 0) {
+                    logger.warning("Database connection attempt " + (attempt + 1) + " failed: " + e.getMessage());
+                } else {
+                    logger.fine("Database connection attempt " + (attempt + 1) + " failed: " + e.getMessage());
+                }
+                
+                // Check if this is a recoverable error
+                if (isRecoverableError(e)) {
+                    // Wait before retrying with exponential backoff
+                    try {
+                        int delayMs = initialRetryDelayMs * (1 << attempt); // Exponential backoff
+                        Thread.sleep(delayMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new SQLException("Connection retry interrupted", ie);
+                    }
+                } else {
+                    // Non-recoverable error, don't retry
+                    logger.severe("Non-recoverable database error: " + e.getMessage());
+                    throw e;
+                }
+            }
         }
+        
+        // All retries failed
+        logger.severe("Failed to get database connection after " + maxRetries + " attempts: " + 
+                     (lastException != null ? lastException.getMessage() : "Unknown error"));
+        
+        throw new SQLException("Failed to get database connection after " + maxRetries + " attempts", lastException);
+    }
+    
+    /**
+     * Determines if an SQL exception is potentially recoverable through retries
+     * 
+     * @param ex The SQLException to check
+     * @return True if the error might be resolved by retrying
+     */
+    private boolean isRecoverableError(SQLException ex) {
+        // MySQL error codes that indicate transient failures
+        // 1040: Too many connections
+        // 1042: Can't get hostname for connection
+        // 1043: Bad handshake
+        // 1047: Unknown protocol
+        // 1081: Can't connect (permission error)
+        // 1152: Aborted connection
+        // 1159: Network error
+        // 1160: Got timeout reading communication packets
+        // 1161: Got timeout writing communication packets
+        int[] recoverableCodes = {1040, 1042, 1043, 1047, 1081, 1152, 1159, 1160, 1161};
+        
+        // Check MySQL error code
+        int errorCode = ex.getErrorCode();
+        for (int code : recoverableCodes) {
+            if (errorCode == code) {
+                return true;
+            }
+        }
+        
+        // Check SQLState for connection issues (starts with '08')
+        String sqlState = ex.getSQLState();
+        if (sqlState != null && sqlState.startsWith("08")) {
+            return true;
+        }
+        
+        // Check for specific exception types or messages that suggest a retry might succeed
+        String message = ex.getMessage().toLowerCase();
+        return message.contains("timeout") 
+            || message.contains("too many connections")
+            || message.contains("connection reset")
+            || message.contains("connection refused") 
+            || message.contains("connection closed")
+            || message.contains("broken pipe")
+            || message.contains("network error");
     }
     
     /**
      * Creates necessary database tables if they don't exist
+     * 
+     * @throws DatabaseInitializationException If tables cannot be created
      */
     private void createTablesIfNotExist() {
-        try (Connection connection = getConnection();
-             Statement statement = connection.createStatement()) {
-            
-            // Create tags table
-            statement.executeUpdate(
-                "CREATE TABLE IF NOT EXISTS `tags` (" +
-                "`id` INT AUTO_INCREMENT PRIMARY KEY," +
-                "`name` VARCHAR(255) NOT NULL," +
-                "`display` VARCHAR(255) NOT NULL," +
-                "`type` ENUM('PREFIX', 'SUFFIX', 'BOTH') NOT NULL," +
-                "`public` BOOLEAN NOT NULL," +
-                "`color` BOOLEAN NOT NULL," +
-                "`material` MEDIUMTEXT NOT NULL," +
-                "`weight` INT NOT NULL" +
-                ");"
-            );
-            
-            // Create tag requests table
-            statement.executeUpdate(
-                "CREATE TABLE IF NOT EXISTS `tag_requests` (" +
-                "`id` INT AUTO_INCREMENT PRIMARY KEY," +
-                "`player_uuid` VARCHAR(36) NOT NULL," +
-                "`player_name` VARCHAR(255) NOT NULL," +
-                "`tag_display` VARCHAR(255) NOT NULL);"
-            );
-            
+        try (Connection connection = getConnection()) {
+            createTablesWithRetry(connection, 3);
             logger.info("Database tables checked and created if needed");
         } catch (SQLException e) {
-            logger.severe("Error creating database tables: " + e.getMessage());
+            String errorMsg = "Critical error creating database tables: " + e.getMessage();
+            logger.severe(errorMsg);
             e.printStackTrace();
+            throw new DatabaseInitializationException(errorMsg, e);
+        }
+    }
+    
+    /**
+     * Creates tables with retry logic
+     * 
+     * @param connection The database connection
+     * @param maxRetries The maximum number of retries
+     * @throws SQLException If tables cannot be created after all retries
+     */
+    private void createTablesWithRetry(Connection connection, int maxRetries) throws SQLException {
+        SQLException lastException = null;
+        
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
+            try (Statement statement = connection.createStatement()) {
+                // Create tags table
+                statement.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS `tags` (" +
+                    "`id` INT AUTO_INCREMENT PRIMARY KEY," +
+                    "`name` VARCHAR(255) NOT NULL," +
+                    "`display` VARCHAR(255) NOT NULL," +
+                    "`type` ENUM('PREFIX', 'SUFFIX', 'BOTH') NOT NULL," +
+                    "`public` BOOLEAN NOT NULL," +
+                    "`color` BOOLEAN NOT NULL," +
+                    "`material` MEDIUMTEXT NOT NULL," +
+                    "`weight` INT NOT NULL," +
+                    "INDEX `idx_tag_name` (`name`)" +
+                    ");"
+                );
+                
+                // Create tag requests table
+                statement.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS `tag_requests` (" +
+                    "`id` INT AUTO_INCREMENT PRIMARY KEY," +
+                    "`player_uuid` VARCHAR(36) NOT NULL," +
+                    "`player_name` VARCHAR(255) NOT NULL," +
+                    "`tag_display` VARCHAR(255) NOT NULL," +
+                    "INDEX `idx_player_uuid` (`player_uuid`)," +
+                    "INDEX `idx_player_name` (`player_name`)" +
+                    ");"
+                );
+                
+                // Successfully created tables, return
+                return;
+            } catch (SQLException e) {
+                lastException = e;
+                logger.warning("Failed to create tables on attempt " + (attempt + 1) + ": " + e.getMessage());
+                
+                if (attempt < maxRetries - 1) {
+                    try {
+                        // Wait before retrying
+                        Thread.sleep(1000 * (attempt + 1));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new SQLException("Table creation interrupted", ie);
+                    }
+                }
+            }
+        }
+        
+        // If we got here, all attempts failed
+        if (lastException != null) {
+            throw lastException;
+        } else {
+            throw new SQLException("Failed to create database tables for unknown reason");
+        }
+    }
+    
+    /**
+     * Custom exception for database initialization failures
+     */
+    public static class DatabaseInitializationException extends RuntimeException {
+        public DatabaseInitializationException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
     
@@ -763,6 +1090,92 @@ public class DatabaseManager {
      */
     public void logPoolStatus() {
         logger.info(getPoolStatus());
+    }
+    
+    /**
+     * Executes a batch operation with a provided PreparedStatementConsumer
+     * This allows for efficient execution of multiple similar database operations
+     *
+     * @param sql The SQL statement to prepare
+     * @param batchSize The maximum size of each batch
+     * @param items The items to process
+     * @param preparer A functional interface to set parameters for each item
+     * @param <T> The type of items to process
+     * @return An array with the number of affected rows for each batch
+     * @throws SQLException If a database error occurs
+     */
+    public <T> int[] executeBatch(String sql, int batchSize, List<T> items, 
+                                PreparedStatementConsumer<T> preparer) throws SQLException {
+        if (items == null || items.isEmpty()) {
+            return new int[0];
+        }
+
+        List<int[]> results = new ArrayList<>();
+        
+        try (Connection connection = getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            
+            int count = 0;
+            for (T item : items) {
+                preparer.accept(statement, item);
+                statement.addBatch();
+                count++;
+                
+                // Execute batch if we've reached the batch size
+                if (count % batchSize == 0) {
+                    results.add(statement.executeBatch());
+                    statement.clearBatch();
+                }
+            }
+            
+            // Execute any remaining items
+            if (count % batchSize != 0) {
+                results.add(statement.executeBatch());
+            }
+        }
+        
+        // Combine all batch results into a single array
+        return combineBatchResults(results);
+    }
+    
+    /**
+     * Combines multiple batch result arrays into a single array
+     *
+     * @param results List of batch result arrays
+     * @return A single array containing all results
+     */
+    private int[] combineBatchResults(List<int[]> results) {
+        int totalLength = 0;
+        for (int[] result : results) {
+            totalLength += result.length;
+        }
+        
+        int[] combined = new int[totalLength];
+        int position = 0;
+        
+        for (int[] result : results) {
+            System.arraycopy(result, 0, combined, position, result.length);
+            position += result.length;
+        }
+        
+        return combined;
+    }
+    
+    /**
+     * Functional interface for setting prepared statement parameters
+     *
+     * @param <T> The type of item to process
+     */
+    @FunctionalInterface
+    public interface PreparedStatementConsumer<T> {
+        /**
+         * Sets parameters on a PreparedStatement for a given item
+         *
+         * @param ps The PreparedStatement
+         * @param item The item to use for parameters
+         * @throws SQLException If a database error occurs
+         */
+        void accept(PreparedStatement ps, T item) throws SQLException;
     }
     
     /**
