@@ -5,25 +5,53 @@ default-tag: "member"
 
 # Database Configuration
 database:
-  schema: 2
+  schema: 3
   host: "your_host"
   port: 3306
   database: "your_database"
   username: "your_username"
   password: "your_password"
+  
+  # Connection retry settings
+  connection-retries: 3
+  retry-delay-ms: 200
+  
+  # Connection pool settings
+  pool:
+    max-size: 10
+    min-idle: 3
+    idle-timeout: 30000
+    connection-timeout: 10000
+    validation-timeout: 5000
+    max-lifetime: 1800000
+    leak-detection-threshold: 30000
+    initialization-fail-timeout: 10000
+  
+  # Health check settings (in ticks, 20 ticks = 1 second)
+  health-check-interval: 12000 # 10 minutes
+
+# UI Configuration
 frame-material: BLACK_STAINED_GLASS_PANE
+
 previous-button:
   slot: 45
   material: ARROW
   display-name: '&bPrevious Page'
+
 next-button:
   slot: 53
   material: ARROW
   display-name: '&bNext Page'
+
 return-button:
   slot: 48
   material: BARRIER
   display-name: '&cReturn to Main Menu'
+
 player-head-button:
   slot: 50
   display-name: '&aYour current tag'
+
+# Notification commands for tag requests
+accept-command: "mail send %player% Your custom tag request has been accepted!"
+deny-command: "mail send %player% Your custom tag request has been denied."
