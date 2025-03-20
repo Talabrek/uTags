@@ -1,34 +1,33 @@
 package com.blockworlds.utags;
 
-import com.blockworlds.utags.services.AsyncDatabaseService;
-import com.blockworlds.utags.services.BatchProcessingService;
-import com.blockworlds.utags.services.CacheService;
+import com.blockworlds.utags.services.*;
 import com.blockworlds.utags.utils.ErrorHandler;
 import com.blockworlds.utags.utils.InventoryOptimizer;
+import com.blockworlds.utags.utils.MessageUtils;
 import com.blockworlds.utags.utils.PerformanceMonitor;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
 import net.luckperms.api.model.user.User;
-import net.luckperms.api.node.Node;
 import net.luckperms.api.node.NodeType;
 import net.luckperms.api.node.types.PrefixNode;
 import net.luckperms.api.node.types.SuffixNode;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
-import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.io.File;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import java.util.logging.Level;
 
 /**
- * Main plugin class for uTags, managing the plugin lifecycle and core functionality.
+ * Main plugin class for uTags, now with enhanced security features.
  */
 public class uTags extends JavaPlugin {
 
@@ -38,30 +37,56 @@ public class uTags extends JavaPlugin {
     private DatabaseManager databaseManager;
     private Map<UUID, String> previewTags;
     
-    // New performance-related components
+    // Core Services
     private ErrorHandler errorHandler;
     private PerformanceModule performanceModule;
     private PerformanceMonitor performanceMonitor;
+    
+    // Security Services
+    private SecurityService securityService;
+    private ValidationService validationService;
+    private ConfigurationManager configurationManager;
+    
+    // Event Listeners
+    private TagMenuListener tagMenuListener;
+    private RequestMenuClickListener requestMenuClickListener;
+    private TagCommandPreviewListener tagCommandPreviewListener;
+    private LoginListener loginListener;
 
     @Override
     public void onEnable() {
         try {
-            setupLuckPerms();
-            loadConfig();
+            // First check if LuckPerms is available (required dependency)
+            if (!setupLuckPerms()) {
+                getLogger().severe("LuckPerms not found! Disabling uTags...");
+                getServer().getPluginManager().disablePlugin(this);
+                return;
+            }
             
-            // Initialize error handler first for centralized error handling
+            // Initialize error handler for centralized error management
             errorHandler = new ErrorHandler(this);
+            
+            // Load and validate configurations
+            if (!loadConfig()) {
+                getLogger().severe("Failed to load configuration! Disabling uTags...");
+                getServer().getPluginManager().disablePlugin(this);
+                return;
+            }
             
             // Initialize performance monitor
             performanceMonitor = new PerformanceMonitor(this, errorHandler);
             performanceMonitor.startMonitoring();
             
-            // Initialize database manager with proper error handling
+            // Initialize security services first
+            configurationManager = new ConfigurationManager(this, errorHandler);
+            securityService = new SecurityService(this, errorHandler);
+            
+            // Initialize database with proper error handling
             try {
                 databaseManager = new DatabaseManager(this);
                 
                 // Update database schema if needed
-                int currentSchemaVersion = getConfig().getInt("database.schema");
+                int currentSchemaVersion = getConfig().getInt("database.schema", 0);
                 int latestSchemaVersion = 3; // Update this value when the schema changes
                 
                 if (databaseManager.updateDatabaseSchema(currentSchemaVersion, latestSchemaVersion)) {
@@ -70,20 +95,23 @@ public class uTags extends JavaPlugin {
                     saveConfig();
                 }
                 
-                // Initialize performance module after database is ready
+                // Initialize validation service after database is ready
+                validationService = new ValidationService(this, errorHandler, securityService);
+                
+                // Initialize performance module
                 performanceModule = new PerformanceModule(this, errorHandler);
                 
-                // Database initialization successful, continue plugin setup
+                // Register commands and events with security-enhanced versions
                 registerCommandsAndEvents();
                 setupTagMenuManager();
                 
-                // Schedule regular performance logging if enabled
-                if (getConfig().getBoolean("performance.logging.enabled", true)) {
-                    long interval = getConfig().getLong("performance.logging.interval-minutes", 30) * 60 * 20; // Convert to ticks
-                    Bukkit.getScheduler().runTaskTimerAsynchronously(this, this::logPerformanceStats, interval, interval);
-                }
+                // Create security documentation
+                configurationManager.createSecureConfigDocumentation();
                 
-                getLogger().info("uTags has been enabled successfully with performance optimizations!");
+                // Schedule regular performance and security logging
+                scheduleLogging();
+                
+                getLogger().info("uTags has been enabled successfully with security enhancements!");
             } catch (DatabaseManager.DatabaseInitializationException e) {
                 getLogger().severe("Failed to initialize database: " + e.getMessage());
                 getLogger().severe("Disabling uTags due to database initialization failure");
@@ -92,7 +120,7 @@ public class uTags extends JavaPlugin {
             } catch (Exception e) {
                 getLogger().severe("Unexpected error during database initialization: " + e.getMessage());
                 e.printStackTrace();
-                getLogger().severe("Disabling uTags due to database initialization failure");
+                getLogger().severe("Disabling uTags due to initialization failure");
                 getServer().getPluginManager().disablePlugin(this);
                 return;
             }
@@ -106,7 +134,14 @@ public class uTags extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        // Shut down performance services first to ensure proper data flushing
+        // Shut down services in the correct order
+        
+        // Close event listeners to prevent memory leaks
+        if (tagMenuListener != null) {
+            tagMenuListener.cleanup();
+        }
+        
+        // Shut down performance services
         if (performanceModule != null) {
             performanceModule.shutdown();
         }
@@ -116,7 +151,7 @@ public class uTags extends JavaPlugin {
             performanceMonitor.stopMonitoring();
         }
         
-        // Close database connections
+        // Close database connections last
         if (databaseManager != null) {
             databaseManager.close();
         }
@@ -124,6 +159,263 @@ public class uTags extends JavaPlugin {
         getLogger().info("uTags has been disabled!");
     }
 
+    /**
+     * Sets up the LuckPerms API.
+     * 
+     * @return True if LuckPerms is available, false otherwise
+     */
+    private boolean setupLuckPerms() {
+        try {
+            if (getServer().getPluginManager().getPlugin("LuckPerms") != null) {
+                luckPerms = LuckPermsProvider.get();
+                return true;
+            }
+            return false;
+        } catch (Exception e) {
+            getLogger().severe("Error setting up LuckPerms: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Loads and validates plugin configuration.
+     * 
+     * @return True if configuration is valid, false otherwise
+     */
+    private boolean loadConfig() {
+        try {
+            // Ensure config file exists
+            File configFile = new File(getDataFolder(), "config.yml");
+            if (!configFile.exists()) {
+                getLogger().info("Creating default configuration file...");
+                saveDefaultConfig();
+            }
+            
+            // Load config
+            reloadConfig();
+            
+            // Load default tag
+            defaultTag = getConfig().getString("default-tag", "member");
+            
+            // Add default performance and security settings if not present
+            if (!getConfig().contains("performance")) {
+                getConfig().createSection("performance");
+                
+                // Cache settings
+                getConfig().set("performance.caching.enabled", true);
+                getConfig().set("performance.caching.expiration-seconds", 300);
+                getConfig().set("performance.caching.statistics", true);
+                
+                // Async settings
+                getConfig().set("performance.async.enabled", true);
+                
+                // Batching settings
+                getConfig().set("performance.batching.enabled", true);
+                getConfig().set("performance.batching.size", 20);
+                getConfig().set("performance.batching.interval-seconds", 5);
+                getConfig().set("performance.batching.auto-flush", true);
+                
+                // Inventory optimization settings
+                getConfig().set("performance.inventory.optimization", true);
+                getConfig().set("performance.inventory.templates", true);
+                getConfig().set("performance.inventory.item-pooling", true);
+                getConfig().set("performance.inventory.page-cache-size", 10);
+                
+                // Performance logging
+                getConfig().set("performance.logging.enabled", true);
+                getConfig().set("performance.logging.interval-minutes", 30);
+                getConfig().set("performance.logging.tps-threshold", 18.0);
+                
+                saveConfig();
+            }
+            
+            // Add security settings if not present
+            if (!getConfig().contains("security")) {
+                getConfig().createSection("security");
+                
+                // Security settings
+                getConfig().set("security.encryption-enabled", false);
+                getConfig().set("security.log-unauthorized-attempts", true);
+                getConfig().set("security.max-failed-attempts", 5);
+                getConfig().set("security.attempt-expiration-seconds", 300);
+                getConfig().set("security.strict-validation", true);
+                getConfig().set("security.max-tag-name-length", 64);
+                getConfig().set("security.max-tag-display-length", 128);
+                getConfig().set("security.max-effective-display-length", 32);
+                getConfig().set("security.verify-all-transactions", true);
+                getConfig().set("security.menu-timeout-seconds", 300);
+                getConfig().set("security.prevent-menu-stealing", true);
+                getConfig().set("security.sanitize-inputs", true);
+                
+                saveConfig();
+            }
+            
+            return true;
+        } catch (Exception e) {
+            getLogger().severe("Error loading configuration: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Registers commands and event listeners with security enhancements.
+     */
+    private void registerCommandsAndEvents() {
+        try {
+            previewTags = new HashMap<>();
+            
+            // Register command with security-enhanced version
+            TagCommand tagCommand = new TagCommand(this, errorHandler, securityService, validationService);
+            getCommand("tag").setExecutor(tagCommand);
+            getCommand("tag").setTabCompleter(tagCommand);
+            
+            // Register event listeners with security enhancements
+            tagMenuListener = new TagMenuListener(this, securityService, errorHandler);
+            requestMenuClickListener = new RequestMenuClickListener(this, securityService, errorHandler);
+            tagCommandPreviewListener = new TagCommandPreviewListener(this);
+            loginListener = new LoginListener(this);
+            
+            getServer().getPluginManager().registerEvents(tagMenuListener, this);
+            getServer().getPluginManager().registerEvents(requestMenuClickListener, this);
+            getServer().getPluginManager().registerEvents(tagCommandPreviewListener, this);
+            getServer().getPluginManager().registerEvents(loginListener, this);
+            
+            // Schedule tag request check with security logging
+            long delay = 5 * 60 * 20; // 5 minutes in ticks (20 ticks per second)
+            Bukkit.getScheduler().runTaskTimer(this, this::checkTagRequests, delay, delay);
+        } catch (Exception e) {
+            errorHandler.logError("Error registering commands and events", e);
+        }
+    }
+    
+    /**
+     * Checks for pending tag requests and notifies staff.
+     */
+    private void checkTagRequests() {
+        try {
+            // Use performance monitoring to track execution time
+            performanceMonitor.trackOperation("check_tag_requests", () -> {
+                // Use cache or async to check tag requests
+                if (performanceModule != null && performanceModule.isAsyncEnabled()) {
+                    AsyncDatabaseService asyncDb = performanceModule.getAsyncDatabaseService();
+                    asyncDb.getCustomTagRequestsAsync().thenAccept(requests -> {
+                        if (requests != null && !requests.isEmpty()) {
+                            notifyStaffAboutPendingRequests(requests.size());
+                        }
+                    });
+                } else {
+                    List<CustomTagRequest> requests = databaseManager.getCustomTagRequests();
+                    if (requests != null && !requests.isEmpty()) {
+                        notifyStaffAboutPendingRequests(requests.size());
+                    }
+                }
+                return null;
+            });
+        } catch (Exception e) {
+            errorHandler.logError("Error checking tag requests", e);
+        }
+    }
+    
+    /**
+     * Notifies staff members about pending tag requests.
+     * 
+     * @param count The number of pending requests
+     */
+    private void notifyStaffAboutPendingRequests(int count) {
+        try {
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                if (player.hasPermission("utags.staff")) {
+                    // Securely validate each player has the correct permission
+                    if (securityService.checkPermission(player, "utags.staff", "view tag requests")) {
+                        player.sendMessage("§c[uTags] §fThere are " + count + " pending tag requests. Use " + 
+                                        "§e/tag admin requests§f to check them.");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            errorHandler.logError("Error notifying staff about pending requests", e);
+        }
+    }
+
+    /**
+     * Sets up the tag menu manager.
+     */
+    private void setupTagMenuManager() {
+        this.tagMenuManager = new TagMenuManager(this);
+    }
+    
+    /**
+     * Schedules periodic logging of performance and security information.
+     */
+    private void scheduleLogging() {
+        try {
+            // Schedule performance logging
+            if (getConfig().getBoolean("performance.logging.enabled", true)) {
+                long performanceInterval = getConfig().getLong("performance.logging.interval-minutes", 30) * 60 * 20; // Convert to ticks
+                Bukkit.getScheduler().runTaskTimerAsynchronously(this, this::logPerformanceStats, performanceInterval, performanceInterval);
+            }
+            
+            // Schedule security logging
+            if (getConfig().getBoolean("security.logging.enabled", true)) {
+                long securityInterval = getConfig().getLong("security.logging.interval-minutes", 60) * 60 * 20; // Convert to ticks
+                Bukkit.getScheduler().runTaskTimerAsynchronously(this, this::logSecurityStats, securityInterval, securityInterval);
+            }
+        } catch (Exception e) {
+            errorHandler.logError("Error scheduling logging tasks", e);
+        }
+    }
+    
+    /**
+     * Logs current performance statistics.
+     */
+    private void logPerformanceStats() {
+        try {
+            // Check if TPS is below threshold to avoid unnecessary logging when server is fine
+            double currentTps = performanceMonitor.getCurrentTps();
+            double tpsThreshold = getConfig().getDouble("performance.logging.tps-threshold", 18.0);
+            
+            if (currentTps < tpsThreshold) {
+                getLogger().warning("Server TPS is " + String.format("%.2f", currentTps) + 
+                                " (below threshold of " + tpsThreshold + "). Performance details:");
+                
+                // Log detailed statistics when TPS is low
+                if (performanceModule != null) {
+                    performanceModule.logStatistics();
+                }
+                
+                if (performanceMonitor != null) {
+                    getLogger().info(performanceMonitor.getStatistics());
+                }
+                
+                databaseManager.logPoolStatus();
+            } else {
+                // Just log basic statistics when TPS is fine
+                getLogger().info("Server performance good. TPS: " + String.format("%.2f", currentTps));
+                
+                if (performanceMonitor != null) {
+                    getLogger().info(performanceMonitor.getBasicStatistics());
+                }
+            }
+        } catch (Exception e) {
+            errorHandler.logError("Error logging performance statistics", e);
+        }
+    }
+    
+    /**
+     * Logs security-related statistics.
+     */
+    private void logSecurityStats() {
+        try {
+            // Log number of players with open menus
+            int openMenusCount = (tagMenuListener != null) ? tagMenuListener.getOpenMenuCount() : 0;
+            getLogger().info("Security Status: " + openMenusCount + " players with open menus");
+            
+            // Log any additional security metrics here
+        } catch (Exception e) {
+            errorHandler.logError("Error logging security statistics", e);
+        }
+    }
+    
     /**
      * Gets the LuckPerms API instance.
      *
@@ -152,12 +444,66 @@ public class uTags extends JavaPlugin {
     }
     
     /**
+     * Gets the security service.
+     *
+     * @return The security service
+     */
+    public SecurityService getSecurityService() {
+        return securityService;
+    }
+    
+    /**
+     * Gets the validation service.
+     *
+     * @return The validation service
+     */
+    public ValidationService getValidationService() {
+        return validationService;
+    }
+    
+    /**
+     * Gets the configuration manager.
+     *
+     * @return The configuration manager
+     */
+    public ConfigurationManager getConfigurationManager() {
+        return configurationManager;
+    }
+    
+    /**
      * Gets the performance module.
      *
      * @return The performance module
      */
     public PerformanceModule getPerformanceModule() {
         return performanceModule;
+    }
+    
+    /**
+     * Gets the performance monitor.
+     *
+     * @return The performance monitor
+     */
+    public PerformanceMonitor getPerformanceMonitor() {
+        return performanceMonitor;
+    }
+
+    /**
+     * Gets the tag menu manager.
+     *
+     * @return The tag menu manager
+     */
+    public TagMenuManager getTagMenuManager() {
+        return tagMenuManager;
+    }
+    
+    /**
+     * Gets the default tag.
+     *
+     * @return The default tag
+     */
+    public String getDefaultTag() {
+        return defaultTag;
     }
     
     /**
@@ -197,140 +543,29 @@ public class uTags extends JavaPlugin {
     }
     
     /**
-     * Gets the performance monitor.
-     *
-     * @return The performance monitor
-     */
-    public PerformanceMonitor getPerformanceMonitor() {
-        return performanceMonitor;
-    }
-
-    private void setupLuckPerms() {
-        if (getServer().getPluginManager().getPlugin("LuckPerms") != null) {
-            luckPerms = LuckPermsProvider.get();
-        } else {
-            getLogger().warning("LuckPerms not found! Disabling uTags...");
-            getServer().getPluginManager().disablePlugin(this);
-        }
-    }
-
-    private void registerCommandsAndEvents() {
-        previewTags = new HashMap<>();
-        TagCommand tagCommand = new TagCommand(this);
-        getCommand("tag").setExecutor(tagCommand);
-        getCommand("tag").setTabCompleter(tagCommand);
-        getServer().getPluginManager().registerEvents(new TagMenuListener(this), this);
-        getServer().getPluginManager().registerEvents(new RequestMenuClickListener(this), this);
-        getServer().getPluginManager().registerEvents(new TagCommandPreviewListener(this), this);
-        getServer().getPluginManager().registerEvents(new LoginListener(this), this);
-        
-        // Schedule tag request check
-        long delay = 5 * 60 * 20; // 5 minutes in ticks (20 ticks per second)
-        Bukkit.getScheduler().runTaskTimer(this, () -> {
-            // Use performance monitoring to track execution time
-            performanceMonitor.trackOperation("check_tag_requests", () -> {
-                // Use cache or async to check tag requests
-                if (performanceModule != null && performanceModule.isAsyncEnabled()) {
-                    AsyncDatabaseService asyncDb = performanceModule.getAsyncDatabaseService();
-                    asyncDb.getCustomTagRequestsAsync().thenAccept(requests -> {
-                        if (requests != null && !requests.isEmpty()) {
-                            notifyStaffAboutPendingRequests(requests.size());
-                        }
-                    });
-                } else {
-                    if (!databaseManager.getCustomTagRequests().isEmpty()) {
-                        notifyStaffAboutPendingRequests(databaseManager.getCustomTagRequests().size());
-                    }
-                }
-            });
-        }, delay, delay);
-    }
-    
-    /**
-     * Notifies staff members about pending tag requests.
-     *
-     * @param count The number of pending requests
-     */
-    private void notifyStaffAboutPendingRequests(int count) {
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            if (player.hasPermission("utags.staff")) {
-                player.sendMessage(ChatColor.RED + "There are " + count + " pending tag requests. Use " + 
-                                  ChatColor.YELLOW + "/tag admin requests" + 
-                                  ChatColor.RED + " to check them.");
-            }
-        }
-    }
-
-    /**
-     * Checks if there are pending tag requests.
+     * Checks if there are pending tag requests with secure handling.
      *
      * @return True if there are pending requests, false otherwise
      */
     public boolean hasPendingTagRequests() {
-        // Use cache if available for better performance
-        if (performanceModule != null && performanceModule.isCachingEnabled()) {
-            CacheService cache = performanceModule.getCacheService();
-            CacheService.CacheKey key = CacheService.CacheKey.forCustom("has_pending_requests");
-            return cache.getOrLoad(key, () -> !databaseManager.getCustomTagRequests().isEmpty());
+        try {
+            // Use cache if available for better performance
+            if (performanceModule != null && performanceModule.isCachingEnabled()) {
+                CacheService cache = performanceModule.getCacheService();
+                CacheService.CacheKey key = CacheService.CacheKey.forCustom("has_pending_requests");
+                return cache.getOrLoad(key, () -> !databaseManager.getCustomTagRequests().isEmpty());
+            }
+            
+            List<CustomTagRequest> requests = databaseManager.getCustomTagRequests();
+            return requests != null && !requests.isEmpty();
+        } catch (Exception e) {
+            errorHandler.logError("Error checking for pending tag requests", e);
+            return false;
         }
-        
-        List<CustomTagRequest> requests = databaseManager.getCustomTagRequests();
-        return requests != null && !requests.isEmpty();
     }
     
-    private void setupTagMenuManager() {
-        this.tagMenuManager = new TagMenuManager(this);
-    }
-
-    private void loadConfig() {
-        saveDefaultConfig();
-        FileConfiguration config = getConfig();
-        defaultTag = config.getString("default-tag");
-        
-        // Add default performance settings if not present
-        if (!config.contains("performance")) {
-            config.createSection("performance");
-            
-            // Cache settings
-            config.set("performance.caching.enabled", true);
-            config.set("performance.caching.expiration-seconds", 300);
-            config.set("performance.caching.statistics", true);
-            
-            // Async settings
-            config.set("performance.async.enabled", true);
-            
-            // Batching settings
-            config.set("performance.batching.enabled", true);
-            config.set("performance.batching.size", 20);
-            config.set("performance.batching.interval-seconds", 5);
-            config.set("performance.batching.auto-flush", true);
-            
-            // Inventory optimization settings
-            config.set("performance.inventory.optimization", true);
-            config.set("performance.inventory.templates", true);
-            config.set("performance.inventory.item-pooling", true);
-            config.set("performance.inventory.page-cache-size", 10);
-            
-            // Performance logging
-            config.set("performance.logging.enabled", true);
-            config.set("performance.logging.interval-minutes", 30);
-            config.set("performance.logging.tps-threshold", 18.0);
-            
-            saveConfig();
-        }
-    }
-
-    public String getDefaultTag() {
-        return defaultTag;
-    }
-
-    public TagMenuManager getTagMenuManager() {
-        return tagMenuManager;
-    }
-
     /**
-     * Gets all available tags of the specified type.
-     * Uses caching if enabled for better performance.
+     * Gets all available tags of the specified type with security checks.
      *
      * @param tagType The type of tags to retrieve
      * @return A list of available tags
@@ -338,19 +573,23 @@ public class uTags extends JavaPlugin {
     public List<Tag> getAvailableTags(TagType tagType) {
         // Use performance monitoring to track execution time
         return performanceMonitor.trackOperation("get_available_tags", () -> {
-            // Use cache if available
-            if (performanceModule != null && performanceModule.isCachingEnabled()) {
-                return performanceModule.getCacheService().getAvailableTags(tagType);
+            try {
+                // Use cache if available
+                if (performanceModule != null && performanceModule.isCachingEnabled()) {
+                    return performanceModule.getCacheService().getAvailableTags(tagType);
+                }
+                
+                // Fall back to direct database access
+                return databaseManager.getAvailableTags(tagType);
+            } catch (Exception e) {
+                errorHandler.logError("Error getting available tags", e);
+                return new ArrayList<>(); // Return empty list in case of error
             }
-            
-            // Fall back to direct database access
-            return databaseManager.getAvailableTags(tagType);
         });
     }
-
+    
     /**
-     * Adds a tag to the database.
-     * Uses batching if enabled for better performance.
+     * Adds a tag to the database with security validation.
      *
      * @param tag The tag to add
      * @return True if successful, false otherwise
@@ -360,39 +599,53 @@ public class uTags extends JavaPlugin {
             return false;
         }
         
+        // Validate tag for security
+        ValidationService.ValidationResult nameResult = validationService.validateTagName(tag.getName(), null);
+        ValidationService.ValidationResult displayResult = validationService.validateTagDisplay(tag.getDisplay(), null);
+        
+        if (!nameResult.isValid() || !displayResult.isValid()) {
+            String error = !nameResult.isValid() ? nameResult.getErrorMessage() : displayResult.getErrorMessage();
+            errorHandler.logError("Invalid tag data: " + error, null);
+            return false;
+        }
+        
         // Use performance monitoring to track execution time
         return performanceMonitor.trackOperation("add_tag", () -> {
-            // Use batch processing if available
-            if (performanceModule != null && performanceModule.isBatchingEnabled()) {
-                performanceModule.getBatchProcessingService().addTag(tag);
-                return true; // Batching doesn't provide immediate result
+            try {
+                // Use batch processing if available
+                if (performanceModule != null && performanceModule.isBatchingEnabled()) {
+                    performanceModule.getBatchProcessingService().addTag(tag);
+                    return true; // Batching doesn't provide immediate result
+                }
+                
+                // Use async if available
+                if (performanceModule != null && performanceModule.isAsyncEnabled()) {
+                    final boolean[] result = new boolean[1];
+                    performanceModule.getAsyncDatabaseService().addTagToDatabaseAsync(tag, success -> {
+                        result[0] = success;
+                    });
+                    return result[0];
+                }
+                
+                // Fall back to direct database access
+                boolean success = databaseManager.addTagToDatabase(tag);
+                
+                // Invalidate cache if needed
+                if (success && performanceModule != null && performanceModule.isCachingEnabled()) {
+                    performanceModule.getCacheService().invalidateTag(tag.getName());
+                }
+                
+                return success;
+            } catch (Exception e) {
+                errorHandler.logError("Error adding tag to database", e);
+                return false;
             }
-            
-            // Use async if available
-            if (performanceModule != null && performanceModule.isAsyncEnabled()) {
-                final boolean[] result = new boolean[1];
-                performanceModule.getAsyncDatabaseService().addTagToDatabaseAsync(tag, success -> {
-                    result[0] = success;
-                });
-                return result[0];
-            }
-            
-            // Fall back to direct database access
-            boolean success = databaseManager.addTagToDatabase(tag);
-            
-            // Invalidate cache if needed
-            if (success && performanceModule != null && performanceModule.isCachingEnabled()) {
-                performanceModule.getCacheService().invalidateTag(tag.getName());
-            }
-            
-            return success;
         });
     }
 
     /**
-     * Deletes a tag from the database.
-     * Uses batching if enabled for better performance.
-     *
+     * Deletes a tag from the database with security validation.
+     * 
      * @param tagName The name of the tag to delete
      * @return True if successful, false otherwise
      */
@@ -401,91 +654,362 @@ public class uTags extends JavaPlugin {
             return false;
         }
         
+        // Validate tag name for security
+        ValidationService.ValidationResult result = validationService.validateTagName(tagName, null);
+        if (!result.isValid()) {
+            errorHandler.logError("Invalid tag name: " + result.getErrorMessage(), null);
+            return false;
+        }
+        
         // Use performance monitoring to track execution time
         return performanceMonitor.trackOperation("delete_tag", () -> {
-            // Use batch processing if available
-            if (performanceModule != null && performanceModule.isBatchingEnabled()) {
-                performanceModule.getBatchProcessingService().deleteTag(tagName);
-                return true; // Batching doesn't provide immediate result
+            try {
+                // Use batch processing if available
+                if (performanceModule != null && performanceModule.isBatchingEnabled()) {
+                    performanceModule.getBatchProcessingService().deleteTag(tagName);
+                    return true; // Batching doesn't provide immediate result
+                }
+                
+                // Use async if available
+                if (performanceModule != null && performanceModule.isAsyncEnabled()) {
+                    final boolean[] result2 = new boolean[1];
+                    performanceModule.getAsyncDatabaseService().deleteTagFromDatabaseAsync(tagName, success -> {
+                        result2[0] = success;
+                    });
+                    return result2[0];
+                }
+                
+                // Fall back to direct database access
+                boolean success = databaseManager.deleteTagFromDatabase(tagName);
+                
+                // Invalidate cache if needed
+                if (success && performanceModule != null && performanceModule.isCachingEnabled()) {
+                    performanceModule.getCacheService().invalidateTag(tagName);
+                }
+                
+                return success;
+            } catch (Exception e) {
+                errorHandler.logError("Error deleting tag from database", e);
+                return false;
             }
-            
-            // Use async if available
-            if (performanceModule != null && performanceModule.isAsyncEnabled()) {
-                final boolean[] result = new boolean[1];
-                performanceModule.getAsyncDatabaseService().deleteTagFromDatabaseAsync(tagName, success -> {
-                    result[0] = success;
-                });
-                return result[0];
-            }
-            
-            // Fall back to direct database access
-            boolean success = databaseManager.deleteTagFromDatabase(tagName);
-            
-            // Invalidate cache if needed
-            if (success && performanceModule != null && performanceModule.isCachingEnabled()) {
-                performanceModule.getCacheService().invalidateTag(tagName);
-            }
-            
-            return success;
         });
     }
-
+    
     /**
-     * Purges the tags table.
-     * Cannot be batched due to its nature, but can be async.
+     * Edits a tag attribute with security validation.
+     *
+     * @param tagName The name of the tag to edit
+     * @param attribute The attribute to edit
+     * @param newValue The new value for the attribute
+     * @return True if successful, false otherwise
+     */
+    public boolean editTagAttribute(String tagName, String attribute, String newValue) {
+        if (tagName == null || tagName.isEmpty() || attribute == null || attribute.isEmpty()) {
+            return false;
+        }
+        
+        // Validate tag name and attribute for security
+        ValidationService.ValidationResult nameResult = validationService.validateTagName(tagName, null);
+        ValidationService.ValidationResult attrResult = validationService.validateAttribute(attribute);
+        
+        if (!nameResult.isValid() || !attrResult.isValid()) {
+            String error = !nameResult.isValid() ? nameResult.getErrorMessage() : attrResult.getErrorMessage();
+            errorHandler.logError("Invalid tag attribute edit: " + error, null);
+            return false;
+        }
+        
+        // Validate the new value based on attribute type
+        boolean isValidValue = true;
+        String validationError = "";
+        
+        switch (attribute.toLowerCase()) {
+            case "name":
+                ValidationService.ValidationResult newNameResult = validationService.validateTagName(newValue, null);
+                isValidValue = newNameResult.isValid();
+                if (!isValidValue) validationError = newNameResult.getErrorMessage();
+                break;
+            case "display":
+                ValidationService.ValidationResult displayResult = validationService.validateTagDisplay(newValue, null);
+                isValidValue = displayResult.isValid();
+                if (!isValidValue) validationError = displayResult.getErrorMessage();
+                break;
+            case "type":
+                ValidationService.ValidationResult typeResult = validationService.validateTagType(newValue);
+                isValidValue = typeResult.isValid();
+                if (!isValidValue) validationError = typeResult.getErrorMessage();
+                break;
+            case "public":
+            case "color":
+                ValidationService.ValidationResult boolResult = validationService.validateBoolean(newValue);
+                isValidValue = boolResult.isValid();
+                if (!isValidValue) validationError = boolResult.getErrorMessage();
+                break;
+            case "weight":
+                ValidationService.ValidationResult weightResult = validationService.validateWeight(newValue);
+                isValidValue = weightResult.isValid();
+                if (!isValidValue) validationError = weightResult.getErrorMessage();
+                break;
+        }
+        
+        if (!isValidValue) {
+            errorHandler.logError("Invalid value for tag attribute: " + validationError, null);
+            return false;
+        }
+        
+        // Use performance monitoring to track execution time
+        return performanceMonitor.trackOperation("edit_tag_attribute", () -> {
+            try {
+                // Use batch processing if available
+                if (performanceModule != null && performanceModule.isBatchingEnabled()) {
+                    performanceModule.getBatchProcessingService().updateTagAttribute(tagName, attribute, newValue);
+                    return true; // Batching doesn't provide immediate result
+                }
+                
+                // Use async if available
+                if (performanceModule != null && performanceModule.isAsyncEnabled()) {
+                    final boolean[] result = new boolean[1];
+                    performanceModule.getAsyncDatabaseService().editTagAttributeAsync(tagName, attribute, newValue, success -> {
+                        result[0] = success;
+                    });
+                    return result[0];
+                }
+                
+                // Fall back to direct database access
+                boolean success = databaseManager.editTagAttribute(tagName, attribute, newValue);
+                
+                // Invalidate cache if needed
+                if (success && performanceModule != null && performanceModule.isCachingEnabled()) {
+                    performanceModule.getCacheService().invalidateTag(tagName);
+                }
+                
+                return success;
+            } catch (Exception e) {
+                errorHandler.logError("Error editing tag attribute", e);
+                return false;
+            }
+        });
+    }
+    
+    /**
+     * Purges the tags table securely.
      *
      * @return True if successful, false otherwise
      */
     public boolean purgeTagsTable() {
         // Use performance monitoring to track execution time
         return performanceMonitor.trackOperation("purge_tags", () -> {
-            // Use async if available
-            if (performanceModule != null && performanceModule.isAsyncEnabled()) {
-                final boolean[] result = new boolean[1];
-                performanceModule.getAsyncDatabaseService().purgeTagsTableAsync(success -> {
-                    result[0] = success;
-                });
-                return result[0];
+            try {
+                // Use async if available
+                if (performanceModule != null && performanceModule.isAsyncEnabled()) {
+                    final boolean[] result = new boolean[1];
+                    performanceModule.getAsyncDatabaseService().purgeTagsTableAsync(success -> {
+                        result[0] = success;
+                    });
+                    return result[0];
+                }
+                
+                // Fall back to direct database access
+                boolean success = databaseManager.purgeTagsTable();
+                
+                // Invalidate cache if needed
+                if (success && performanceModule != null && performanceModule.isCachingEnabled()) {
+                    performanceModule.getCacheService().invalidateAllTags();
+                }
+                
+                return success;
+            } catch (Exception e) {
+                errorHandler.logError("Error purging tags table", e);
+                return false;
             }
-            
-            // Fall back to direct database access
-            boolean success = databaseManager.purgeTagsTable();
-            
-            // Invalidate cache if needed
-            if (success && performanceModule != null && performanceModule.isCachingEnabled()) {
-                performanceModule.getCacheService().invalidateAllTags();
-            }
-            
-            return success;
         });
     }
-
+    
     /**
-     * Purges the requests table.
-     * Cannot be batched due to its nature, but can be async.
+     * Purges the requests table securely.
      *
      * @return True if successful, false otherwise
      */
     public boolean purgeRequestsTable() {
         // Use performance monitoring to track execution time
         return performanceMonitor.trackOperation("purge_requests", () -> {
-            // Use async if available
-            if (performanceModule != null && performanceModule.isAsyncEnabled()) {
-                final boolean[] result = new boolean[1];
-                performanceModule.getAsyncDatabaseService().purgeRequestsTableAsync(success -> {
-                    result[0] = success;
-                });
-                return result[0];
+            try {
+                // Use async if available
+                if (performanceModule != null && performanceModule.isAsyncEnabled()) {
+                    final boolean[] result = new boolean[1];
+                    performanceModule.getAsyncDatabaseService().purgeRequestsTableAsync(success -> {
+                        result[0] = success;
+                    });
+                    return result[0];
+                }
+                
+                // Fall back to direct database access
+                return databaseManager.purgeRequestsTable();
+            } catch (Exception e) {
+                errorHandler.logError("Error purging requests table", e);
+                return false;
             }
-            
-            // Fall back to direct database access
-            return databaseManager.purgeRequestsTable();
         });
     }
-
+    
     /**
-     * Creates a custom tag request.
-     * Uses batching if enabled for better performance.
+     * Sets a player's tag with security validation.
+     *
+     * @param player The player to set the tag for
+     * @param tagDisplay The display text for the tag
+     * @param tagType The type of tag (PREFIX/SUFFIX)
+     * @return True if successful, false otherwise
+     */
+    public boolean setPlayerTag(Player player, String tagDisplay, TagType tagType) {
+        if (player == null || tagDisplay == null || tagType == null) {
+            return false;
+        }
+        
+        // Validate the player and tag for security
+        ValidationService.ValidationResult playerResult = validationService.validatePlayer(player);
+        ValidationService.ValidationResult displayResult = validationService.validateTagDisplay(tagDisplay, player);
+        
+        if (!playerResult.isValid() || !displayResult.isValid()) {
+            String error = !playerResult.isValid() ? playerResult.getErrorMessage() : displayResult.getErrorMessage();
+            errorHandler.logError("Invalid player or tag display: " + error, null);
+            return false;
+        }
+        
+        // Log this operation
+        securityService.logSecurityEvent(Level.INFO, player, "SET_TAG",
+            "Setting " + tagType + " for player: " + tagDisplay);
+        
+        // Use performance monitoring to track execution time
+        return performanceMonitor.trackOperation("set_player_tag", () -> {
+            try {
+                User user = luckPerms.getUserManager().getUser(player.getUniqueId());
+                if (user != null) {
+                    if (tagType == TagType.PREFIX) {
+                        user.data().clear(NodeType.PREFIX.predicate());
+                        user.data().add(PrefixNode.builder(tagDisplay, 10000).build());
+                    } else {
+                        user.data().clear(NodeType.SUFFIX.predicate());
+                        user.data().add(SuffixNode.builder(tagDisplay, 10000).build());
+                    }
+                    luckPerms.getUserManager().saveUser(user);
+                    
+                    // Invalidate player-related cache entries
+                    if (performanceModule != null && performanceModule.isCachingEnabled()) {
+                        performanceModule.getCacheService().invalidatePlayerData(player.getUniqueId(), player.getName());
+                    }
+                    
+                    return true;
+                }
+                return false;
+            } catch (Exception e) {
+                errorHandler.logError("Error setting player tag", e);
+                return false;
+            }
+        });
+    }
+    
+    /**
+     * Gets a tag's name by its display text securely.
+     *
+     * @param display The display text
+     * @return The tag name, or null if not found
+     */
+    public String getTagNameByDisplay(String display) {
+        if (display == null || display.isEmpty()) {
+            return null;
+        }
+        
+        // Use performance monitoring to track execution time
+        return performanceMonitor.trackOperation("get_tag_name_by_display", () -> {
+            try {
+                // Use cache if available
+                if (performanceModule != null && performanceModule.isCachingEnabled()) {
+                    return performanceModule.getCacheService().getTagNameByDisplay(display);
+                }
+                
+                // Fall back to direct database access
+                return databaseManager.getTagNameByDisplay(display);
+            } catch (Exception e) {
+                errorHandler.logError("Error getting tag name by display", e);
+                return null;
+            }
+        });
+    }
+    
+    /**
+     * Gets a tag's display text by its name securely.
+     *
+     * @param name The tag name
+     * @return The tag display text, or null if not found
+     */
+    public String getTagDisplayByName(String name) {
+        if (name == null || name.isEmpty()) {
+            return null;
+        }
+        
+        // Use performance monitoring to track execution time
+        return performanceMonitor.trackOperation("get_tag_display_by_name", () -> {
+            try {
+                // Use cache if available
+                if (performanceModule != null && performanceModule.isCachingEnabled()) {
+                    return performanceModule.getCacheService().getTagDisplayByName(name);
+                }
+                
+                // Fall back to direct database access
+                return databaseManager.getTagDisplayByName(name);
+            } catch (Exception e) {
+                errorHandler.logError("Error getting tag display by name", e);
+                return null;
+            }
+        });
+    }
+    
+    /**
+     * Adds a tag preview for a player with security validation.
+     *
+     * @param player The player to add the preview for
+     * @param tag The tag to preview
+     */
+    public void addPreviewTag(Player player, String tag) {
+        if (player == null || tag == null) {
+            return;
+        }
+        
+        // Validate tag for security
+        ValidationService.ValidationResult result = validationService.validateTagDisplay(tag, player);
+        if (!result.isValid()) {
+            if (player.isOnline()) {
+                player.sendMessage(ChatColor.RED + result.getErrorMessage());
+            }
+            return;
+        }
+        
+        previewTags.put(player.getUniqueId(), tag);
+        
+        // Log the preview for security audit
+        securityService.logSecurityEvent(Level.FINE, player, "TAG_PREVIEW", 
+            "Player previewing tag: " + tag);
+        
+        // Set a timeout to remove the preview if not used
+        long timeoutTicks = getConfig().getLong("security.menu-timeout-seconds", 300) * 20;
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (previewTags.containsKey(player.getUniqueId()) && 
+                previewTags.get(player.getUniqueId()).equals(tag)) {
+                previewTags.remove(player.getUniqueId());
+            }
+        }, timeoutTicks);
+    }
+    
+    /**
+     * Gets the preview tags map.
+     *
+     * @return The preview tags map
+     */
+    public Map<UUID, String> getPreviewTags() {
+        return Collections.unmodifiableMap(previewTags);
+    }
+    
+    /**
+     * Creates a custom tag request securely.
      *
      * @param player The player making the request
      * @param tagDisplay The requested tag display
@@ -496,55 +1020,80 @@ public class uTags extends JavaPlugin {
             return false;
         }
         
+        // Validate tag for security
+        ValidationService.ValidationResult result = validationService.validateTagDisplay(tagDisplay, player);
+        if (!result.isValid()) {
+            if (player.isOnline()) {
+                player.sendMessage(ChatColor.RED + result.getErrorMessage());
+            }
+            return false;
+        }
+        
+        // Format tag display consistently
         int endIndex = tagDisplay.indexOf(']') + 1;
         if (endIndex < tagDisplay.length()) {
             tagDisplay = tagDisplay.substring(0, endIndex);
         }
         
-        // Use performance monitoring to track execution time
+        // Log this request for security audit
+        securityService.logSecurityEvent(Level.INFO, player, "CREATE_TAG_REQUEST",
+            "Player requested tag: " + tagDisplay);
+            
         final String finalTagDisplay = tagDisplay;
+        
+        // Use performance monitoring to track execution time
         return performanceMonitor.trackOperation("create_request", () -> {
-            // Use batch processing if available
-            if (performanceModule != null && performanceModule.isBatchingEnabled()) {
-                CustomTagRequest request = new CustomTagRequest(
-                    0, player.getUniqueId(), player.getName(), finalTagDisplay
-                );
-                performanceModule.getBatchProcessingService().addCustomTagRequest(request);
-                player.sendMessage(ChatColor.GREEN + "Your tag request has been submitted!");
-                return true; // Batching doesn't provide immediate result
-            }
-            
-            // Use async if available
-            if (performanceModule != null && performanceModule.isAsyncEnabled()) {
-                performanceModule.getAsyncDatabaseService().createCustomTagRequestAsync(
-                    player.getUniqueId(), player.getName(), finalTagDisplay,
-                    success -> {
-                        if (success) {
-                            player.sendMessage(ChatColor.GREEN + "Your tag request has been submitted!");
-                        } else {
-                            player.sendMessage(ChatColor.RED + "An error occurred while submitting your tag request.");
-                        }
+            try {
+                // Use batch processing if available
+                if (performanceModule != null && performanceModule.isBatchingEnabled()) {
+                    CustomTagRequest request = new CustomTagRequest(
+                        0, player.getUniqueId(), player.getName(), finalTagDisplay
+                    );
+                    performanceModule.getBatchProcessingService().addCustomTagRequest(request);
+                    if (player.isOnline()) {
+                        player.sendMessage(ChatColor.GREEN + "Your tag request has been submitted!");
                     }
-                );
-                return true; // Async doesn't provide immediate result
+                    return true; // Batching doesn't provide immediate result
+                }
+                
+                // Use async if available
+                if (performanceModule != null && performanceModule.isAsyncEnabled()) {
+                    performanceModule.getAsyncDatabaseService().createCustomTagRequestAsync(
+                        player.getUniqueId(), player.getName(), finalTagDisplay,
+                        success -> {
+                            if (player.isOnline()) {
+                                if (success) {
+                                    player.sendMessage(ChatColor.GREEN + "Your tag request has been submitted!");
+                                } else {
+                                    player.sendMessage(ChatColor.RED + "An error occurred while submitting your tag request.");
+                                }
+                            }
+                        }
+                    );
+                    return true; // Async doesn't provide immediate result
+                }
+                
+                // Fall back to direct database access
+                boolean success = databaseManager.createCustomTagRequest(player.getUniqueId(), player.getName(), finalTagDisplay);
+                
+                if (player.isOnline()) {
+                    if (success) {
+                        player.sendMessage(ChatColor.GREEN + "Your tag request has been submitted!");
+                    } else {
+                        player.sendMessage(ChatColor.RED + "An error occurred while submitting your tag request.");
+                    }
+                }
+                
+                return success;
+            } catch (Exception e) {
+                errorHandler.logError("Error creating custom tag request", e);
+                return false;
             }
-            
-            // Fall back to direct database access
-            boolean success = databaseManager.createCustomTagRequest(player.getUniqueId(), player.getName(), finalTagDisplay);
-            
-            if (success) {
-                player.sendMessage(ChatColor.GREEN + "Your tag request has been submitted!");
-            } else {
-                player.sendMessage(ChatColor.RED + "An error occurred while submitting your tag request.");
-            }
-            
-            return success;
         });
     }
-
+    
     /**
-     * Gets the count of custom tags for a player.
-     * Uses caching if enabled for better performance.
+     * Gets the number of custom tags a player has.
      *
      * @param playerName The name of the player
      * @return The number of custom tags
@@ -554,41 +1103,56 @@ public class uTags extends JavaPlugin {
             return 0;
         }
         
+        // Validate player name for security
+        ValidationService.ValidationResult result = validationService.validatePlayerName(playerName);
+        if (!result.isValid()) {
+            errorHandler.logError("Invalid player name: " + result.getErrorMessage(), null);
+            return 0;
+        }
+        
         // Use performance monitoring to track execution time
         return performanceMonitor.trackOperation("count_custom_tags", () -> {
-            // Use cache if available
-            if (performanceModule != null && performanceModule.isCachingEnabled()) {
-                return performanceModule.getCacheService().countCustomTags(playerName);
+            try {
+                // Use cache if available
+                if (performanceModule != null && performanceModule.isCachingEnabled()) {
+                    return performanceModule.getCacheService().countCustomTags(playerName);
+                }
+                
+                // Fall back to direct database access
+                return databaseManager.countCustomTags(playerName);
+            } catch (Exception e) {
+                errorHandler.logError("Error counting custom tags", e);
+                return 0;
             }
-            
-            // Fall back to direct database access
-            return databaseManager.countCustomTags(playerName);
         });
     }
-
+    
     /**
-     * Gets all custom tag requests.
-     * Uses caching if enabled for better performance.
+     * Gets all custom tag requests securely.
      *
      * @return A list of custom tag requests
      */
     public List<CustomTagRequest> getCustomTagRequests() {
         // Use performance monitoring to track execution time
         return performanceMonitor.trackOperation("get_requests", () -> {
-            // Use cache if available
-            if (performanceModule != null && performanceModule.isCachingEnabled()) {
-                CacheService.CacheKey key = CacheService.CacheKey.forCustom("tag_requests");
-                return performanceModule.getCacheService().getOrLoad(key, () -> databaseManager.getCustomTagRequests());
+            try {
+                // Use cache if available
+                if (performanceModule != null && performanceModule.isCachingEnabled()) {
+                    CacheService.CacheKey key = CacheService.CacheKey.forCustom("tag_requests");
+                    return performanceModule.getCacheService().getOrLoad(key, () -> databaseManager.getCustomTagRequests());
+                }
+                
+                // Fall back to direct database access
+                return databaseManager.getCustomTagRequests();
+            } catch (Exception e) {
+                errorHandler.logError("Error getting custom tag requests", e);
+                return new ArrayList<>(); // Return empty list in case of error
             }
-            
-            // Fall back to direct database access
-            return databaseManager.getCustomTagRequests();
         });
     }
-
+    
     /**
-     * Gets a custom tag request by player name.
-     * Uses caching if enabled for better performance.
+     * Gets a custom tag request by player name securely.
      *
      * @param playerName The name of the player
      * @return The custom tag request, or null if not found
@@ -598,28 +1162,52 @@ public class uTags extends JavaPlugin {
             return null;
         }
         
+        // Validate player name for security
+        ValidationService.ValidationResult result = validationService.validatePlayerName(playerName);
+        if (!result.isValid()) {
+            errorHandler.logError("Invalid player name: " + result.getErrorMessage(), null);
+            return null;
+        }
+        
         // Use performance monitoring to track execution time
         return performanceMonitor.trackOperation("get_request_by_name", () -> {
-            // Use cache if available
-            if (performanceModule != null && performanceModule.isCachingEnabled()) {
-                CacheService.CacheKey key = CacheService.CacheKey.forCustom("request_" + playerName);
-                return performanceModule.getCacheService().getOrLoad(key, () -> databaseManager.getCustomTagRequestByPlayerName(playerName));
+            try {
+                // Use cache if available
+                if (performanceModule != null && performanceModule.isCachingEnabled()) {
+                    CacheService.CacheKey key = CacheService.CacheKey.forCustom("request_" + playerName);
+                    return performanceModule.getCacheService().getOrLoad(key, () -> databaseManager.getCustomTagRequestByPlayerName(playerName));
+                }
+                
+                // Fall back to direct database access
+                return databaseManager.getCustomTagRequestByPlayerName(playerName);
+            } catch (Exception e) {
+                errorHandler.logError("Error getting custom tag request by player name", e);
+                return null;
             }
-            
-            // Fall back to direct database access
-            return databaseManager.getCustomTagRequestByPlayerName(playerName);
         });
     }
-
+    
     /**
-     * Accepts a custom tag request.
-     * Uses async operations if enabled for better performance.
+     * Accepts a custom tag request securely.
      *
      * @param request The request to accept
      * @return True if successful, false otherwise
      */
     public boolean acceptCustomTagRequest(CustomTagRequest request) {
         if (request == null) {
+            return false;
+        }
+        
+        // Validate request for security
+        ValidationService.ValidationResult uuidResult = validationService.validateUUID(request.getPlayerUuid());
+        ValidationService.ValidationResult nameResult = validationService.validatePlayerName(request.getPlayerName());
+        ValidationService.ValidationResult displayResult = validationService.validateTagDisplay(request.getTagDisplay(), null);
+        
+        if (!uuidResult.isValid() || !nameResult.isValid() || !displayResult.isValid()) {
+            String error = !uuidResult.isValid() ? uuidResult.getErrorMessage() : 
+                          !nameResult.isValid() ? nameResult.getErrorMessage() : 
+                          displayResult.getErrorMessage();
+            errorHandler.logError("Invalid tag request: " + error, null);
             return false;
         }
         
@@ -661,9 +1249,9 @@ public class uTags extends JavaPlugin {
                 }
                 
                 // Add the permission to the player
-                getLuckPerms().getUserManager().loadUser(request.getPlayerUuid()).thenAcceptAsync(user -> {
-                    user.data().add(Node.builder(permission).build());
-                    getLuckPerms().getUserManager().saveUser(user);
+                luckPerms.getUserManager().loadUser(request.getPlayerUuid()).thenAcceptAsync(user -> {
+                    user.data().add(net.luckperms.api.node.Node.builder(permission).build());
+                    luckPerms.getUserManager().saveUser(user);
                     
                     // Execute the configured command to notify the player
                     String command = getConfig().getString("accept-command", "mail send %player% Your custom tag request has been accepted!");
@@ -677,6 +1265,10 @@ public class uTags extends JavaPlugin {
                     performanceModule.getCacheService().invalidatePlayerData(request.getPlayerUuid(), request.getPlayerName());
                 }
                 
+                // Log the acceptance for security audit
+                securityService.logSecurityEvent(Level.INFO, null, "TAG_REQUEST_ACCEPTED",
+                    "Accepted tag request for " + request.getPlayerName() + ": " + request.getTagDisplay());
+                
                 return true;
             } catch (Exception e) {
                 errorHandler.logError("Error accepting custom tag request", e);
@@ -684,10 +1276,9 @@ public class uTags extends JavaPlugin {
             }
         });
     }
-
+    
     /**
-     * Denies a custom tag request.
-     * Uses batching if enabled for better performance.
+     * Denies a custom tag request securely.
      *
      * @param request The request to deny
      * @return True if successful, false otherwise
@@ -715,6 +1306,11 @@ public class uTags extends JavaPlugin {
                     String command = getConfig().getString("deny-command", "mail send %player% Your custom tag request has been denied.");
                     command = command.replace("%player%", request.getPlayerName());
                     Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+                    
+                    // Log the denial for security audit
+                    securityService.logSecurityEvent(Level.INFO, null, "TAG_REQUEST_DENIED",
+                        "Denied tag request for " + request.getPlayerName() + ": " + request.getTagDisplay());
+                    
                     return true;
                 } else {
                     errorHandler.logWarning("Failed to remove custom tag request with ID: " + request.getId());
@@ -726,20 +1322,36 @@ public class uTags extends JavaPlugin {
             }
         });
     }
-
+    
     /**
-     * Opens the requests menu for a player.
-     * Uses optimized inventory handling if enabled.
+     * Opens the requests menu for a player securely.
      *
      * @param player The player to open the menu for
      */
     public void openRequestsMenu(Player player) {
-        openRequestsMenu(player, getCustomTagRequests());
+        try {
+            // Validate player for security
+            ValidationService.ValidationResult result = validationService.validatePlayer(player);
+            if (!result.isValid()) {
+                errorHandler.logError("Invalid player: " + result.getErrorMessage(), null);
+                return;
+            }
+            
+            // Check admin permission
+            if (!securityService.checkAdmin(player, "view tag requests")) {
+                return;
+            }
+            
+            // Get requests with security check
+            List<CustomTagRequest> requests = getCustomTagRequests();
+            openRequestsMenu(player, requests);
+        } catch (Exception e) {
+            errorHandler.logError("Error opening requests menu", e);
+        }
     }
-
+    
     /**
      * Opens the requests menu for a player with specific requests.
-     * Uses optimized inventory handling if enabled.
      *
      * @param player The player to open the menu for
      * @param requests The requests to display
@@ -747,237 +1359,85 @@ public class uTags extends JavaPlugin {
     public void openRequestsMenu(Player player, List<CustomTagRequest> requests) {
         // Use performance monitoring to track execution time
         performanceMonitor.trackOperation("open_requests_menu", () -> {
-            // Use inventory optimizer if available
-            if (performanceModule != null && performanceModule.isInventoryOptimizationEnabled()) {
-                InventoryOptimizer optimizer = performanceModule.getInventoryOptimizer();
+            try {
+                // Validate player for security
+                ValidationService.ValidationResult result = validationService.validatePlayer(player);
+                if (!result.isValid()) {
+                    errorHandler.logError("Invalid player: " + result.getErrorMessage(), null);
+                    return null;
+                }
                 
+                // Check admin permission
+                if (!securityService.checkAdmin(player, "view tag requests")) {
+                    return null;
+                }
+                
+                // Use inventory optimizer if available
+                if (performanceModule != null && performanceModule.isInventoryOptimizationEnabled()) {
+                    InventoryOptimizer optimizer = performanceModule.getInventoryOptimizer();
+                    
+                    int size = 9 * (int) Math.ceil(requests.size() / 9.0);
+                    if (size < 9) size = 9;
+                    
+                    Inventory inventory = optimizer.createFramedInventory(
+                        size, ChatColor.BLUE + "Custom Tag Requests", player
+                    );
+                    
+                    for (CustomTagRequest request : requests) {
+                        ItemStack item = optimizer.createPlayerHead(
+                            Bukkit.getPlayer(request.getPlayerUuid()),
+                            ChatColor.GREEN + request.getPlayerName(),
+                            Arrays.asList(
+                                ChatColor.GRAY + "Requested Tag: " + ChatColor.translateAlternateColorCodes('&', request.getTagDisplay()),
+                                "",
+                                ChatColor.YELLOW + "Left-click to accept",
+                                ChatColor.RED + "Right-click to deny"
+                            )
+                        );
+                        inventory.addItem(item);
+                    }
+                    
+                    player.openInventory(inventory);
+                    return null;
+                }
+                
+                // Fall back to original implementation
                 int size = 9 * (int) Math.ceil(requests.size() / 9.0);
                 if (size < 9) size = 9;
-                
-                Inventory inventory = optimizer.createFramedInventory(
-                    size, ChatColor.BLUE + "Custom Tag Requests", player
-                );
-                
+                Inventory inventory = Bukkit.createInventory(null, size, ChatColor.BLUE + "Custom Tag Requests");
+
                 for (CustomTagRequest request : requests) {
-                    ItemStack item = optimizer.createPlayerHead(
-                        Bukkit.getPlayer(request.getPlayerUuid()),
-                        ChatColor.GREEN + request.getPlayerName(),
-                        Arrays.asList(
-                            ChatColor.GRAY + "Requested Tag: " + ChatColor.translateAlternateColorCodes('&', request.getTagDisplay()),
-                            "",
-                            ChatColor.YELLOW + "Left-click to accept",
-                            ChatColor.RED + "Right-click to deny"
-                        )
-                    );
+                    ItemStack item = new ItemStack(Material.PLAYER_HEAD);
+                    SkullMeta skullMeta = (SkullMeta) item.getItemMeta();
+                    skullMeta.setOwningPlayer(Bukkit.getOfflinePlayer(request.getPlayerUuid()));
+                    skullMeta.setDisplayName(ChatColor.GREEN + request.getPlayerName());
+                    List<String> lore = new ArrayList<>();
+                    lore.add(ChatColor.GRAY + "Requested Tag: " + ChatColor.translateAlternateColorCodes('&', request.getTagDisplay()));
+                    lore.add("");
+                    lore.add(ChatColor.YELLOW + "Left-click to accept");
+                    lore.add(ChatColor.RED + "Right-click to deny");
+                    skullMeta.setLore(lore);
+                    item.setItemMeta(skullMeta);
                     inventory.addItem(item);
                 }
-                
+
                 player.openInventory(inventory);
                 return null;
+            } catch (Exception e) {
+                errorHandler.logError("Error opening requests menu", e);
+                return null;
             }
-            
-            // Fall back to original implementation
-            int size = 9 * (int) Math.ceil(requests.size() / 9.0);
-            if (size < 9) size = 9;
-            Inventory inventory = Bukkit.createInventory(null, size, ChatColor.BLUE + "Custom Tag Requests");
-
-            for (CustomTagRequest request : requests) {
-                ItemStack item = new ItemStack(Material.PLAYER_HEAD);
-                SkullMeta skullMeta = (SkullMeta) item.getItemMeta();
-                skullMeta.setOwningPlayer(Bukkit.getOfflinePlayer(request.getPlayerUuid()));
-                skullMeta.setDisplayName(ChatColor.GREEN + request.getPlayerName());
-                List<String> lore = new ArrayList<>();
-                lore.add(ChatColor.GRAY + "Requested Tag: " + ChatColor.translateAlternateColorCodes('&', request.getTagDisplay()));
-                lore.add("");
-                lore.add(ChatColor.YELLOW + "Left-click to accept");
-                lore.add(ChatColor.RED + "Right-click to deny");
-                skullMeta.setLore(lore);
-                item.setItemMeta(skullMeta);
-                inventory.addItem(item);
-            }
-
-            player.openInventory(inventory);
-            return null;
         });
-    }
-
-    /**
-     * Edits a tag attribute in the database.
-     * Uses batching if enabled for better performance.
-     *
-     * @param tagName The name of the tag to edit
-     * @param attribute The attribute to edit
-     * @param newValue The new value for the attribute
-     * @return True if successful, false otherwise
-     */
-    public boolean editTagAttribute(String tagName, String attribute, String newValue) {
-        if (tagName == null || tagName.isEmpty() || attribute == null || attribute.isEmpty()) {
-            return false;
-        }
-        
-        // Use performance monitoring to track execution time
-        return performanceMonitor.trackOperation("edit_tag_attribute", () -> {
-            // Use batch processing if available
-            if (performanceModule != null && performanceModule.isBatchingEnabled()) {
-                performanceModule.getBatchProcessingService().updateTagAttribute(tagName, attribute, newValue);
-                return true; // Batching doesn't provide immediate result
-            }
-            
-            // Use async if available
-            if (performanceModule != null && performanceModule.isAsyncEnabled()) {
-                final boolean[] result = new boolean[1];
-                performanceModule.getAsyncDatabaseService().editTagAttributeAsync(tagName, attribute, newValue, success -> {
-                    result[0] = success;
-                });
-                return result[0];
-            }
-            
-            // Fall back to direct database access
-            boolean success = databaseManager.editTagAttribute(tagName, attribute, newValue);
-            
-            // Invalidate cache if needed
-            if (success && performanceModule != null && performanceModule.isCachingEnabled()) {
-                performanceModule.getCacheService().invalidateTag(tagName);
-            }
-            
-            return success;
-        });
-    }
-
-    /**
-     * Sets a player's tag.
-     * Uses cache invalidation for better consistency.
-     *
-     * @param player The player to set the tag for
-     * @param tagDisplay The display text for the tag
-     * @param tagType The type of tag (PREFIX/SUFFIX)
-     * @return True if successful, false otherwise
-     */
-    public boolean setPlayerTag(Player player, String tagDisplay, TagType tagType) {
-        if (player == null || tagDisplay == null || tagType == null) {
-            return false;
-        }
-        
-        // Use performance monitoring to track execution time
-        return performanceMonitor.trackOperation("set_player_tag", () -> {
-            User user = getLuckPerms().getUserManager().getUser(player.getUniqueId());
-            if (user != null) {
-                if (tagType == TagType.PREFIX) {
-                    user.data().clear(NodeType.PREFIX.predicate());
-                    user.data().add(PrefixNode.builder(tagDisplay, 10000).build());
-                } else {
-                    user.data().clear(NodeType.SUFFIX.predicate());
-                    user.data().add(SuffixNode.builder(tagDisplay, 10000).build());
-                }
-                getLuckPerms().getUserManager().saveUser(user);
-                
-                // Invalidate player-related cache entries
-                if (performanceModule != null && performanceModule.isCachingEnabled()) {
-                    performanceModule.getCacheService().invalidatePlayerData(player.getUniqueId(), player.getName());
-                }
-                
-                return true;
-            }
-            return false;
-        });
-    }
-
-    /**
-     * Gets a tag's name by its display text.
-     * Uses caching if enabled for better performance.
-     *
-     * @param display The display text
-     * @return The tag name, or null if not found
-     */
-    public String getTagNameByDisplay(String display) {
-        if (display == null || display.isEmpty()) {
-            return null;
-        }
-        
-        // Use performance monitoring to track execution time
-        return performanceMonitor.trackOperation("get_tag_name_by_display", () -> {
-            // Use cache if available
-            if (performanceModule != null && performanceModule.isCachingEnabled()) {
-                return performanceModule.getCacheService().getTagNameByDisplay(display);
-            }
-            
-            // Fall back to direct database access
-            return databaseManager.getTagNameByDisplay(display);
-        });
-    }
-
-    /**
-     * Gets a tag's display text by its name.
-     * Uses caching if enabled for better performance.
-     *
-     * @param name The tag name
-     * @return The tag display text, or null if not found
-     */
-    public String getTagDisplayByName(String name) {
-        if (name == null || name.isEmpty()) {
-            return null;
-        }
-        
-        // Use performance monitoring to track execution time
-        return performanceMonitor.trackOperation("get_tag_display_by_name", () -> {
-            // Use cache if available
-            if (performanceModule != null && performanceModule.isCachingEnabled()) {
-                return performanceModule.getCacheService().getTagDisplayByName(name);
-            }
-            
-            // Fall back to direct database access
-            return databaseManager.getTagDisplayByName(name);
-        });
-    }
-
-    public void addPreviewTag(Player player, String tag) {
-        previewTags.put(player.getUniqueId(), tag);
-    }
-
-    public Map<UUID, String> getPreviewTags() {
-        return previewTags;
     }
     
     /**
      * Logs the current database connection pool status.
      */
     public void logDatabaseStatus() {
-        databaseManager.logPoolStatus();
-    }
-    
-    /**
-     * Logs performance statistics from all services.
-     */
-    private void logPerformanceStats() {
         try {
-            // Check if TPS is below threshold to avoid unnecessary logging when server is fine
-            double currentTps = performanceMonitor.getCurrentTps();
-            double tpsThreshold = getConfig().getDouble("performance.logging.tps-threshold", 18.0);
-            
-            if (currentTps < tpsThreshold) {
-                getLogger().warning("Server TPS is " + String.format("%.2f", currentTps) + 
-                                 " (below threshold of " + tpsThreshold + "). Performance details:");
-                
-                // Log detailed statistics when TPS is low
-                if (performanceModule != null) {
-                    performanceModule.logStatistics();
-                }
-                
-                if (performanceMonitor != null) {
-                    getLogger().info(performanceMonitor.getStatistics());
-                }
-                
-                logDatabaseStatus();
-            } else {
-                // Just log basic statistics when TPS is fine
-                getLogger().info("Server performance good. TPS: " + String.format("%.2f", currentTps));
-                
-                if (performanceMonitor != null) {
-                    getLogger().info(performanceMonitor.getBasicStatistics());
-                }
-            }
+            databaseManager.logPoolStatus();
         } catch (Exception e) {
-            errorHandler.logError("Error logging performance statistics", e);
+            errorHandler.logError("Error logging database status", e);
         }
     }
     
@@ -985,8 +1445,12 @@ public class uTags extends JavaPlugin {
      * Flushes all batched operations immediately.
      */
     public void flushAllBatches() {
-        if (performanceModule != null && performanceModule.isBatchingEnabled()) {
-            performanceModule.getBatchProcessingService().processBatches();
+        try {
+            if (performanceModule != null && performanceModule.isBatchingEnabled()) {
+                performanceModule.getBatchProcessingService().processBatches();
+            }
+        } catch (Exception e) {
+            errorHandler.logError("Error flushing batches", e);
         }
     }
 }
