@@ -620,41 +620,71 @@ public class DatabaseManager {
     }
     
     /**
-     * Updates a tag attribute in the database
-     * 
-     * @param tagName The name of the tag to update
-     * @param attribute The attribute to update
-     * @param newValue The new value for the attribute
-     * @return True if successful, false otherwise
-     */
-    public boolean editTagAttribute(String tagName, String attribute, String newValue) {
-        // Validate attribute to prevent SQL injection
-        if (!isValidAttribute(attribute)) {
-            logger.warning("Invalid attribute name attempted: " + attribute);
-            return false;
-        }
-        
-        // First check if the tag exists
-        if (!tagExists(tagName)) {
-            return false;
-        }
-        
-        String query = "UPDATE tags SET " + attribute + " = ? WHERE name = ?";
-        
-        try (Connection connection = getConnection();
-             PreparedStatement statement = connection.prepareStatement(query)) {
-            
-            statement.setString(1, newValue);
-            statement.setString(2, tagName);
-            
-            int rowsAffected = statement.executeUpdate();
-            return rowsAffected > 0;
-        } catch (SQLException e) {
-            logger.severe("Error updating tag attribute: " + e.getMessage());
-            e.printStackTrace();
-            return false;
-        }
+ * Updates a tag attribute in the database.
+ * Previous implementation had SQL injection vulnerability by directly concatenating
+ * the attribute name into the query string.
+ *
+ * @param tagName The name of the tag to edit
+ * @param attribute The attribute to edit
+ * @param newValue The new value for the attribute
+ * @return True if successful, false otherwise
+ */
+public boolean editTagAttribute(String tagName, String attribute, String newValue) {
+    // Validate attribute to prevent SQL injection
+    if (!isValidAttribute(attribute)) {
+        logger.warning("Invalid attribute name attempted: " + attribute);
+        return false;
     }
+    
+    // First check if the tag exists
+    if (!tagExists(tagName)) {
+        return false;
+    }
+    
+    // Use attribute-specific prepared statements instead of string concatenation
+    String query;
+    switch(attribute.toLowerCase()) {
+        case "name":
+            query = "UPDATE tags SET name = ? WHERE name = ?";
+            break;
+        case "display":
+            query = "UPDATE tags SET display = ? WHERE name = ?";
+            break;
+        case "type":
+            query = "UPDATE tags SET type = ? WHERE name = ?";
+            break;
+        case "public":
+            query = "UPDATE tags SET public = ? WHERE name = ?";
+            break;
+        case "color":
+            query = "UPDATE tags SET color = ? WHERE name = ?";
+            break;
+        case "material":
+            query = "UPDATE tags SET material = ? WHERE name = ?";
+            break;
+        case "weight":
+            query = "UPDATE tags SET weight = ? WHERE name = ?";
+            break;
+        default:
+            // This shouldn't happen due to isValidAttribute check, but just in case
+            logger.severe("Unexpected attribute passed validation: " + attribute);
+            return false;
+    }
+    
+    try (Connection connection = getConnection();
+         PreparedStatement statement = connection.prepareStatement(query)) {
+        
+        statement.setString(1, newValue);
+        statement.setString(2, tagName);
+        
+        int rowsAffected = statement.executeUpdate();
+        return rowsAffected > 0;
+    } catch (SQLException e) {
+        logger.severe("Error updating tag attribute: " + e.getMessage());
+        e.printStackTrace();
+        return false;
+    }
+}
     
     /**
      * Checks if an attribute name is valid to prevent SQL injection
