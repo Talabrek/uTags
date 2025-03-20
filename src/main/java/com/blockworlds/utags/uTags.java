@@ -29,26 +29,47 @@ public class uTags extends JavaPlugin {
 
     @Override
     public void onEnable() {
-        setupLuckPerms();
-        loadConfig();
-        
-        // Initialize database manager
-        databaseManager = new DatabaseManager(this);
-        
-        registerCommandsAndEvents();
-        setupTagMenuManager();
-        
-        // Update database schema if needed
-        int currentSchemaVersion = getConfig().getInt("database.schema");
-        int latestSchemaVersion = 3; // Update this value when the schema changes
-        
-        if (databaseManager.updateDatabaseSchema(currentSchemaVersion, latestSchemaVersion)) {
-            // Update config with new schema version
-            getConfig().set("database.schema", latestSchemaVersion);
-            saveConfig();
+        try {
+            setupLuckPerms();
+            loadConfig();
+            
+            // Initialize database manager with proper error handling
+            try {
+                databaseManager = new DatabaseManager(this);
+                
+                // Update database schema if needed
+                int currentSchemaVersion = getConfig().getInt("database.schema");
+                int latestSchemaVersion = 3; // Update this value when the schema changes
+                
+                if (databaseManager.updateDatabaseSchema(currentSchemaVersion, latestSchemaVersion)) {
+                    // Update config with new schema version
+                    getConfig().set("database.schema", latestSchemaVersion);
+                    saveConfig();
+                }
+                
+                // Database initialization successful, continue plugin setup
+                registerCommandsAndEvents();
+                setupTagMenuManager();
+                
+                getLogger().info("uTags has been enabled successfully!");
+            } catch (DatabaseManager.DatabaseInitializationException e) {
+                getLogger().severe("Failed to initialize database: " + e.getMessage());
+                getLogger().severe("Disabling uTags due to database initialization failure");
+                getServer().getPluginManager().disablePlugin(this);
+                return;
+            } catch (Exception e) {
+                getLogger().severe("Unexpected error during database initialization: " + e.getMessage());
+                e.printStackTrace();
+                getLogger().severe("Disabling uTags due to database initialization failure");
+                getServer().getPluginManager().disablePlugin(this);
+                return;
+            }
+        } catch (Exception e) {
+            getLogger().severe("Critical error during plugin initialization: " + e.getMessage());
+            e.printStackTrace();
+            getLogger().severe("Disabling uTags due to initialization failure");
+            getServer().getPluginManager().disablePlugin(this);
         }
-        
-        getLogger().info("uTags has been enabled!");
     }
 
     @Override
