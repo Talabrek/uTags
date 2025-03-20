@@ -1,6 +1,10 @@
 package com.blockworlds.utags.commands;
 
+import com.blockworlds.utags.exceptions.MaxCustomTagsException;
+import com.blockworlds.utags.exceptions.TagRequestException;
+import com.blockworlds.utags.exceptions.ValidationException;
 import com.blockworlds.utags.uTags;
+import com.blockworlds.utags.utils.ErrorHandler;
 import com.blockworlds.utags.utils.MessageUtils;
 import com.blockworlds.utags.utils.PermissionUtils;
 import com.blockworlds.utags.utils.ValidationUtils;
@@ -9,12 +13,14 @@ import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.Level;
 
 /**
  * Command handler for tag request commands in the uTags plugin.
  * Handles the "/tag request [tag]" command, which allows players to request custom tags.
  */
 public class RequestCommandHandler extends AbstractCommandHandler {
+    private final ErrorHandler errorHandler;
 
     /**
      * Creates a new RequestCommandHandler.
@@ -23,66 +29,78 @@ public class RequestCommandHandler extends AbstractCommandHandler {
      */
     public RequestCommandHandler(uTags plugin) {
         super(plugin);
+        this.errorHandler = new ErrorHandler(plugin);
     }
 
     @Override
     public boolean handleCommand(CommandSender sender, String[] args) {
-        Player player = asPlayer(sender);
-        
-        if (player == null) {
-            return false;
-        }
+        try {
+            // Check if sender is a player
+            Player player = errorHandler.checkPlayer(sender);
+            if (player == null) {
+                return false;
+            }
 
-        if (args.length < 1) {
-            showTagRequestHelp(player);
+            // Display help if no tag provided
+            if (args.length < 1) {
+                showTagRequestHelp(player);
+                return true;
+            }
+
+            String requestedTag = args[0];
+            
+            // Check custom tag limit
+            int customTagCount = plugin.countCustomTags(player.getName());
+            int maxCustomTags = 5; // Maximum number of custom tags allowed
+            String requiredPermission = "utags.custom" + (customTagCount + 1);
+            
+            // Verify permission for additional custom tag
+            if (!player.hasPermission(requiredPermission)) {
+                if (customTagCount >= maxCustomTags) {
+                    throw new MaxCustomTagsException(player.getName(), maxCustomTags);
+                } else {
+                    throw new TagRequestException("You need the permission " + requiredPermission + " to request this custom tag.");
+                }
+            }
+            
+            // Validate tag format
+            String validationResult = ValidationUtils.validateTagFormat(requestedTag);
+            if (validationResult != null) {
+                throw new ValidationException(validationResult);
+            }
+            
+            // Process the tag preview
+            requestedTag = ValidationUtils.normalizeTagString(requestedTag);
+            
+            // Log successful request attempt
+            plugin.getLogger().log(Level.INFO, 
+                "Player {0} requested a custom tag: {1}", 
+                new Object[]{player.getName(), requestedTag});
+            
+            // Show tag preview and ask for confirmation
+            MessageUtils.sendSuccess(player, "Tag request preview: " + MessageUtils.colorize(requestedTag));
+            MessageUtils.sendInfo(player, "Type 'accept' to accept the tag or 'decline' to try again.");
+            
+            // Register the preview listener
+            plugin.addPreviewTag(player, requestedTag);
             return true;
-        }
-
-        String requestedTag = args[0];
-        
-        // Count existing custom tags and determine which slot we're using
-        int customTagCount = plugin.countCustomTags(player.getName());
-        String requiredPermission = "utags.custom" + (customTagCount + 1);
-        
-        // Check if player has permission for an additional custom tag
-        if (!player.hasPermission(requiredPermission)) {
-            if (!requiredPermission.equalsIgnoreCase("utags.custom5")) {
-                MessageUtils.sendError(player, "You can't request any more custom tags, unlock more custom tag slots every month as a premium subscriber.");
-            } else {
-                MessageUtils.sendError(player, "You have reached the maximum number of custom tags.");
+            
+        } catch (MaxCustomTagsException e) {
+            return errorHandler.handleException(e, sender, "requesting a custom tag");
+        } catch (ValidationException e) {
+            boolean isColorCodeIssue = e.getValidationMessage().contains("color code");
+            
+            // Show color codes if that's the issue
+            if (isColorCodeIssue && sender instanceof Player) {
+                MessageUtils.showColorCodes((Player) sender);
             }
-            return false;
+            
+            return errorHandler.handleException(e, sender, "validating tag format");
+        } catch (TagRequestException e) {
+            return errorHandler.handleException(e, sender, "requesting a custom tag");
+        } catch (Exception e) {
+            return errorHandler.handleException(e, sender, "processing tag request");
         }
-        
-        // Validate tag format
-        String validationResult = ValidationUtils.validateTagFormat(requestedTag);
-        if (validationResult != null) {
-            MessageUtils.sendError(player, validationResult);
-            if (validationResult.contains("color code")) {
-                showColorCodes(player);
-            }
-            return false;
-        }
-        
-        // Process the tag preview
-        requestedTag = ValidationUtils.normalizeTagString(requestedTag);
-        
-        // Show tag preview and ask for confirmation
-        MessageUtils.sendSuccess(player, "Tag request preview: " + MessageUtils.colorize(requestedTag));
-        MessageUtils.sendInfo(player, "Type 'accept' to accept the tag or 'decline' to try again.");
-        
-        // Register the preview listener
-        plugin.addPreviewTag(player, requestedTag);
-        return true;
-    }
-
-    /**
-     * Shows available color codes to a player.
-     *
-     * @param player The player to show color codes to
-     */
-    private void showColorCodes(Player player) {
-        MessageUtils.showColorCodes(player);
     }
 
     /**
@@ -101,7 +119,7 @@ public class RequestCommandHandler extends AbstractCommandHandler {
         MessageUtils.sendInfo(player, "6. The tag must not contain any invalid characters.");
         MessageUtils.sendInfo(player, "7. Everything after the final square bracket will be ignored.");
         MessageUtils.sendInfo(player, "A staff member will review your request and approve it if it meets the requirements.");
-        showColorCodes(player);
+        MessageUtils.showColorCodes(player);
     }
 
     @Override
@@ -113,17 +131,22 @@ public class RequestCommandHandler extends AbstractCommandHandler {
         Player player = (Player) sender;
         
         if (args.length == 1) {
-            List<String> suggestions = new ArrayList<>();
-            
-            // Get next available custom slot
-            int nextSlot = PermissionUtils.getNextAvailableCustomSlot(player);
-            if (nextSlot > 0) {
-                suggestions.add("&c[YourTag]");
-                suggestions.add("&e[CustomTag]");
-                suggestions.add("&a[UniqueTag]");
-                suggestions.add("&b[CoolTag]");
-                suggestions.add("&d[AwesomeTag]");
-                return filterSuggestions(suggestions, args[0]);
+            try {
+                List<String> suggestions = new ArrayList<>();
+                
+                // Get next available custom slot
+                int nextSlot = PermissionUtils.getNextAvailableCustomSlot(player);
+                if (nextSlot > 0) {
+                    suggestions.add("&c[YourTag]");
+                    suggestions.add("&e[CustomTag]");
+                    suggestions.add("&a[UniqueTag]");
+                    suggestions.add("&b[CoolTag]");
+                    suggestions.add("&d[AwesomeTag]");
+                    return filterSuggestions(suggestions, args[0]);
+                }
+            } catch (Exception e) {
+                // Log but don't interrupt tab completion
+                plugin.getLogger().log(Level.WARNING, "Error during tab completion", e);
             }
         }
         
