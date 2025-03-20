@@ -6,11 +6,17 @@ default-tag: "member"
 # Database Configuration
 database:
   schema: 3
+  # You can use environment variables for these settings:
+  # - UTAGS_DATABASE_HOST
+  # - UTAGS_DATABASE_PORT
+  # - UTAGS_DATABASE_DATABASE
+  # - UTAGS_DATABASE_USERNAME
+  # - UTAGS_DATABASE_PASSWORD
   host: "your_host"
   port: 3306
   database: "your_database"
   username: "your_username"
-  password: "your_password"
+  password: "change_me"  # Use /tag admin encrypt to secure this
   
   # Connection retry settings
   connection-retries: 3
@@ -29,6 +35,34 @@ database:
   
   # Health check settings (in ticks, 20 ticks = 1 second)
   health-check-interval: 12000 # 10 minutes
+
+# Security Settings
+security:
+  # Enables password encryption in the config file
+  encryption-enabled: false
+  
+  # Security logging
+  log-unauthorized-attempts: true
+  
+  # Rate limiting
+  max-failed-attempts: 5
+  attempt-expiration-seconds: 300
+  
+  # Input validation
+  strict-validation: true
+  max-tag-name-length: 64
+  max-tag-display-length: 128
+  max-effective-display-length: 32  # Length after color codes removed
+  
+  # Permission checks
+  verify-all-transactions: true
+  
+  # Session protection
+  menu-timeout-seconds: 300
+  prevent-menu-stealing: true
+  
+  # Protection against SQL injection
+  sanitize-inputs: true
 
 # Performance Optimization Settings
 performance:
