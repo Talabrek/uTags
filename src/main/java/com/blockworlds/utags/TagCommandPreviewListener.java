@@ -6,8 +6,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.UUID;
 
 public class TagCommandPreviewListener implements Listener {
@@ -21,18 +19,22 @@ public class TagCommandPreviewListener implements Listener {
     public void onClick(AsyncPlayerChatEvent event) {
         Player player = event.getPlayer();
         UUID playerId = player.getUniqueId();
+        
+        // Check if the player has a preview tag
         if (plugin.getPreviewTags().containsKey(playerId)) {
             event.setCancelled(true);
             String tag = plugin.getPreviewTags().get(playerId);
 
             if (event.getMessage().equalsIgnoreCase("accept")) {
-                // Handle the tag request
+                // Handle the tag request using our uTags instance
                 plugin.createCustomTagRequest(player, tag);
             } else if (event.getMessage().equalsIgnoreCase("decline")) {
                 player.sendMessage(ChatColor.RED + "You have declined to request this tag. Please try again.");
             } else {
                 player.sendMessage(ChatColor.RED + "Invalid Response. Please make a new tag request.");
             }
+            
+            // Remove the preview tag
             plugin.getPreviewTags().remove(playerId);
         }
     }
