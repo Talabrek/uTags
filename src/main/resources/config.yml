@@ -30,6 +30,38 @@ database:
   # Health check settings (in ticks, 20 ticks = 1 second)
   health-check-interval: 12000 # 10 minutes
 
+# Performance Optimization Settings
+performance:
+  # Caching settings
+  caching:
+    enabled: true
+    expiration-seconds: 300    # 5 minutes
+    statistics: true           # Track cache hit/miss rates
+  
+  # Async operation settings
+  async:
+    enabled: true
+  
+  # Batch processing settings
+  batching:
+    enabled: true
+    size: 20                   # Maximum batch size
+    interval-seconds: 5        # Process batches every 5 seconds
+    auto-flush: true           # Automatically flush batches when they reach the size
+  
+  # Inventory optimization settings
+  inventory:
+    optimization: true
+    templates: true            # Use inventory templates
+    item-pooling: true         # Use item pooling
+    page-cache-size: 10        # Maximum number of tag pages to cache
+  
+  # Performance logging
+  logging:
+    enabled: true
+    interval-minutes: 30       # Log performance stats every 30 minutes
+    tps-threshold: 18.0        # Only log detailed stats if TPS is below this threshold
+
 # UI Configuration
 frame-material: BLACK_STAINED_GLASS_PANE
 
