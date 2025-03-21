@@ -1,45 +1,46 @@
 package com.blockworlds.utags;
 
+import com.blockworlds.utags.controller.impl.AdminCommandController;
+import com.blockworlds.utags.controller.impl.HelpCommandController;
+import com.blockworlds.utags.controller.impl.MenuClickController;
+import com.blockworlds.utags.controller.impl.PlayerLoginController;
+import com.blockworlds.utags.controller.impl.TagCommandController;
+import com.blockworlds.utags.controller.impl.TagPreviewController;
+import com.blockworlds.utags.di.ApplicationModule;
 import com.blockworlds.utags.di.ServiceContainer;
-import com.blockworlds.utags.model.CustomTagRequest;
-import com.blockworlds.utags.model.Tag;
-import com.blockworlds.utags.model.TagType;
-import com.blockworlds.utags.repository.RequestRepository;
-import com.blockworlds.utags.repository.TagRepository;
+import com.blockworlds.utags.repository.impl.DatabaseConnector;
 import com.blockworlds.utags.service.TagService;
-import com.blockworlds.utags.utils.Utils;
+import com.blockworlds.utags.util.ErrorHandler;
+import com.blockworlds.utags.view.MenuBuilder;
+
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
-import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
-import org.bukkit.Material;
-import org.bukkit.entity.Player;
-import org.bukkit.inventory.ItemStack;
+
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.PluginCommand;
+import org.bukkit.command.TabCompleter;
+import org.bukkit.event.Listener;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.logging.Level;
 
-public class uTags extends JavaPlugin {
+/**
+ * Main plugin class for uTags.
+ * Manages plugin lifecycle and component registration.
+ */
+public class UTags extends JavaPlugin {
     private LuckPerms luckPerms;
-    private DatabaseManager databaseManager;
-    private TagMenuManager tagMenuManager;
-    private TagService tagService;
-    private Map<UUID, String> previewTags = new HashMap<>();
+    private ApplicationModule module;
+    private ServiceContainer container;
+    private final Map<UUID, String> previewTags = new HashMap<>();
     
-    private TagMenuListener tagMenuListener;
-    private RequestMenuClickListener requestMenuClickListener;
-    private TagCommandPreviewListener tagCommandPreviewListener;
-    private LoginListener loginListener;
-    
-    private ServiceContainer serviceContainer;
-
     @Override
     public void onEnable() {
         try {
+            // Initialize core dependencies
             if (!setupLuckPerms()) {
                 getLogger().severe("LuckPerms not found! Disabling uTags...");
                 getServer().getPluginManager().disablePlugin(this);
@@ -52,8 +53,14 @@ public class uTags extends JavaPlugin {
                 return;
             }
             
-            setupServices();
-            registerCommandsAndEvents();
+            // Initialize dependency injection
+            initializeDI();
+            
+            // Register commands and listeners
+            registerCommandsAndListeners();
+            
+            // Schedule periodic tasks
+            schedulePeriodicTasks();
             
             getLogger().info("uTags has been enabled successfully!");
         } catch (Exception e) {
@@ -65,12 +72,43 @@ public class uTags extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        if (databaseManager != null) {
-            databaseManager.close();
+        if (container != null) {
+            // Close database connections
+            try {
+                DatabaseConnector dbConnector = container.get(DatabaseConnector.class);
+                if (dbConnector != null) {
+                    dbConnector.close();
+                }
+            } catch (Exception e) {
+                getLogger().warning("Error closing database connections: " + e.getMessage());
+            }
+            
+            // Clear container
+            container.clear();
         }
+        
         getLogger().info("uTags has been disabled!");
     }
-
+    
+    /**
+     * Initializes the dependency injection container and registers all components.
+     */
+    private void initializeDI() {
+        try {
+            module = new ApplicationModule(this, getLogger(), luckPerms);
+            container = module.getContainer();
+            getLogger().info("Dependency injection initialized successfully");
+        } catch (Exception e) {
+            getLogger().severe("Error initializing dependency injection: " + e.getMessage());
+            throw new RuntimeException("Failed to initialize dependency injection", e);
+        }
+    }
+    
+    /**
+     * Sets up the LuckPerms dependency.
+     * 
+     * @return true if successful, false otherwise
+     */
     private boolean setupLuckPerms() {
         try {
             if (getServer().getPluginManager().getPlugin("LuckPerms") != null) {
@@ -83,7 +121,12 @@ public class uTags extends JavaPlugin {
             return false;
         }
     }
-
+    
+    /**
+     * Loads the plugin configuration.
+     * 
+     * @return true if successful, false otherwise
+     */
     private boolean loadConfig() {
         try {
             File configFile = new File(getDataFolder(), "config.yml");
@@ -99,202 +142,123 @@ public class uTags extends JavaPlugin {
             return false;
         }
     }
-
-    private void setupServices() {
+    
+    /**
+     * Registers commands and event listeners from the container.
+     */
+    private void registerCommandsAndListeners() {
         try {
-            databaseManager = new DatabaseManager(this);
+            // Register command with multiple handlers
+            registerCommand("tag", 
+                container.get(TagCommandController.class),
+                container.get(AdminCommandController.class),
+                container.get(HelpCommandController.class)
+            );
             
-            serviceContainer = new ServiceContainer(getLogger());
+            // Register listeners
+            registerListeners(
+                container.get(MenuClickController.class),
+                container.get(PlayerLoginController.class),
+                container.get(TagPreviewController.class)
+            );
             
-            serviceContainer.registerInstance(JavaPlugin.class, this);
-            serviceContainer.registerInstance(LuckPerms.class, luckPerms);
-            serviceContainer.registerInstance(TagRepository.class, databaseManager);
-            serviceContainer.registerInstance(RequestRepository.class, databaseManager);
-            
-            tagService = new TagService(this, databaseManager, databaseManager, luckPerms);
-            serviceContainer.registerInstance(TagService.class, tagService);
-            
-            tagMenuManager = new TagMenuManager(this);
-            
-            getLogger().info("Services initialized successfully");
+            getLogger().info("Commands and listeners registered successfully");
         } catch (Exception e) {
-            getLogger().severe("Error setting up services: " + e.getMessage());
-            throw new RuntimeException("Failed to initialize services", e);
-        }
-    }
-
-    private void registerCommandsAndEvents() {
-        try {
-            TagCommand tagCommand = new TagCommand(this);
-            getCommand("tag").setExecutor(tagCommand);
-            getCommand("tag").setTabCompleter(tagCommand);
-            
-            tagMenuListener = new TagMenuListener(this);
-            requestMenuClickListener = new RequestMenuClickListener(this);
-            tagCommandPreviewListener = new TagCommandPreviewListener(this);
-            loginListener = new LoginListener(this);
-            
-            getServer().getPluginManager().registerEvents(tagMenuListener, this);
-            getServer().getPluginManager().registerEvents(requestMenuClickListener, this);
-            getServer().getPluginManager().registerEvents(tagCommandPreviewListener, this);
-            getServer().getPluginManager().registerEvents(loginListener, this);
-            
-            long checkInterval = 5 * 60 * 20; // 5 minutes in ticks
-            Bukkit.getScheduler().runTaskTimer(this, this::checkTagRequests, checkInterval, checkInterval);
-        } catch (Exception e) {
-            getLogger().severe("Error registering commands and events: " + e.getMessage());
-            throw new RuntimeException("Failed to register commands and events", e);
+            getLogger().severe("Error registering commands and listeners: " + e.getMessage());
+            throw new RuntimeException("Failed to register commands and listeners", e);
         }
     }
     
-    private void checkTagRequests() {
-        if (tagService.hasPendingRequests()) {
-            for (Player player : Bukkit.getOnlinePlayers()) {
-                if (player.hasPermission(Utils.PERM_STAFF)) {
-                    player.sendMessage(ChatColor.RED + "There are pending tag requests. Use " + 
-                                     ChatColor.YELLOW + "/tag admin requests" + 
-                                     ChatColor.RED + " to check them.");
-                }
+    /**
+     * Registers a command with the specified executor and completer.
+     *
+     * @param name The command name
+     * @param executor The command executor
+     */
+    private void registerCommand(String name, Object... handlers) {
+        PluginCommand command = getCommand(name);
+        if (command == null) {
+            getLogger().warning("Command '" + name + "' not found in plugin.yml");
+            return;
+        }
+        
+        // Find the main command executor and tab completer
+        CommandExecutor executor = null;
+        TabCompleter completer = null;
+        
+        for (Object handler : handlers) {
+            if (handler instanceof CommandExecutor && executor == null) {
+                executor = (CommandExecutor) handler;
+            }
+            if (handler instanceof TabCompleter && completer == null) {
+                completer = (TabCompleter) handler;
             }
         }
+        
+        if (executor != null) {
+            command.setExecutor(executor);
+        }
+        if (completer != null) {
+            command.setTabCompleter(completer);
+        }
     }
-
-    public TagMenuManager getTagMenuManager() {
-        return tagMenuManager;
+    
+    /**
+     * Registers multiple listeners with the plugin.
+     *
+     * @param listeners The listeners to register
+     */
+    private void registerListeners(Listener... listeners) {
+        for (Listener listener : listeners) {
+            getServer().getPluginManager().registerEvents(listener, this);
+        }
     }
-
-    public TagService getTagService() {
-        return tagService;
+    
+    /**
+     * Schedules periodic tasks.
+     */
+    private void schedulePeriodicTasks() {
+        // Schedule tag request checker
+        long checkInterval = 5 * 60 * 20; // 5 minutes in ticks
+        getServer().getScheduler().runTaskTimer(this, () -> {
+            try {
+                TagService tagService = container.get(TagService.class);
+                tagService.notifyStaffOfPendingRequests();
+            } catch (Exception e) {
+                container.get(ErrorHandler.class).logError("Error checking tag requests", e);
+            }
+        }, checkInterval, checkInterval);
     }
-
-    public LuckPerms getLuckPerms() {
-        return luckPerms;
-    }
-
+    
+    /**
+     * Gets a reference to the tag preview map.
+     * Used by controllers to access and manage tag previews.
+     *
+     * @return The tag preview map
+     */
     public Map<UUID, String> getPreviewTags() {
         return previewTags;
     }
-
-    public void addPreviewTag(Player player, String tag) {
-        if (player == null || tag == null) return;
-        
-        String validationResult = Utils.validateTagFormat(tag);
-        if (validationResult != null) {
-            if (player.isOnline()) {
-                player.sendMessage(ChatColor.RED + validationResult);
-            }
-            return;
-        }
-        
-        previewTags.put(player.getUniqueId(), tag);
-        
-        Utils.logSecurityEvent(Level.FINE, player, "TAG_PREVIEW", "Player previewing tag: " + tag);
-        
-        long timeoutTicks = getConfig().getLong("security.menu-timeout-seconds", 300) * 20;
-        Bukkit.getScheduler().runTaskLater(this, () -> {
-            if (previewTags.containsKey(player.getUniqueId()) && 
-                previewTags.get(player.getUniqueId()).equals(tag)) {
-                previewTags.remove(player.getUniqueId());
-            }
-        }, timeoutTicks);
+    
+    /**
+     * Gets a service from the container.
+     * Public accessor for other plugins that might want to integrate.
+     *
+     * @param <T> The service type
+     * @param type The service class
+     * @return The service instance
+     */
+    public <T> T getService(Class<T> type) {
+        return container.get(type);
     }
-
-    // Database facade methods
-    public List<Tag> getAvailableTags(TagType tagType) {
-        return tagService.getAvailableTags(tagType);
-    }
-
-    public boolean hasPendingTagRequests() {
-        return tagService.hasPendingRequests();
-    }
-
-    public List<CustomTagRequest> getCustomTagRequests() {
-        return tagService.getCustomTagRequests();
-    }
-
-    public CustomTagRequest getCustomTagRequestByPlayerName(String playerName) {
-        return tagService.getCustomTagRequestByPlayerName(playerName);
-    }
-
-    public boolean createCustomTagRequest(Player player, String tagDisplay) {
-        return tagService.createCustomTagRequest(player, tagDisplay);
-    }
-
-    public boolean acceptCustomTagRequest(CustomTagRequest request) {
-        return tagService.acceptCustomTagRequest(request);
-    }
-
-    public boolean denyCustomTagRequest(CustomTagRequest request) {
-        return tagService.denyCustomTagRequest(request);
-    }
-
-    public boolean setPlayerTag(Player player, String tagDisplay, TagType tagType) {
-        return tagService.setPlayerTag(player, tagDisplay, tagType);
-    }
-
-    public String getTagNameByDisplay(String display) {
-        return tagService.getTagNameByDisplay(display);
-    }
-
-    public String getTagDisplayByName(String name) {
-        return tagService.getTagDisplayByName(name);
-    }
-
-    public boolean addTagToDatabase(Tag tag) {
-        return tagService.addTag(tag);
-    }
-
-    public boolean deleteTagFromDatabase(String tagName) {
-        return tagService.deleteTag(tagName);
-    }
-
-    public boolean editTagAttribute(String tagName, String attribute, String newValue) {
-        return tagService.editTagAttribute(tagName, attribute, newValue);
-    }
-
-    public int countCustomTags(String playerName) {
-        return tagService.countCustomTags(playerName);
-    }
-
-    public boolean purgeTagsTable() {
-        return tagService.purgeTagsTable();
-    }
-
-    public boolean purgeRequestsTable() {
-        return tagService.purgeRequestsTable();
-    }
-
-    public void openRequestsMenu(Player player) {
-        if (!Utils.hasAdminPermission(player)) {
-            Utils.sendError(player, "You don't have permission to do that.");
-            return;
-        }
-        
-        List<CustomTagRequest> requests = getCustomTagRequests();
-        int rows = Math.max(1, (int) Math.ceil(requests.size() / 9.0));
-        Inventory requestsMenu = Bukkit.createInventory(player, rows * 9, "Custom Tag Requests");
-
-        for (CustomTagRequest request : requests) {
-            ItemStack playerHead = new ItemStack(Material.PLAYER_HEAD);
-            SkullMeta meta = (SkullMeta) playerHead.getItemMeta();
-
-            if (meta != null) {
-                meta.setOwningPlayer(Bukkit.getOfflinePlayer(request.getPlayerUuid()));
-                meta.setDisplayName(ChatColor.GREEN + request.getPlayerName());
-                
-                List<String> lore = new ArrayList<>();
-                lore.add(ChatColor.GRAY + "Requested Tag: " + ChatColor.translateAlternateColorCodes('&', request.getTagDisplay()));
-                lore.add("");
-                lore.add(ChatColor.YELLOW + "Left-click to accept");
-                lore.add(ChatColor.RED + "Right-click to deny");
-                meta.setLore(lore);
-                
-                playerHead.setItemMeta(meta);
-            }
-
-            requestsMenu.addItem(playerHead);
-        }
-
-        player.openInventory(requestsMenu);
+    
+    /**
+     * Gets the menu builder.
+     * Convenience method for backward compatibility.
+     *
+     * @return The menu builder
+     */
+    public MenuBuilder getMenuBuilder() {
+        return container.get(MenuBuilder.class);
     }
 }
