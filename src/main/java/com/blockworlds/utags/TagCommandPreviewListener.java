@@ -1,5 +1,6 @@
 package com.blockworlds.utags;
 
+import com.blockworlds.utags.utils.Utils;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -26,15 +27,13 @@ public class TagCommandPreviewListener implements Listener {
             String tag = plugin.getPreviewTags().get(playerId);
 
             if (event.getMessage().equalsIgnoreCase("accept")) {
-                // Handle the tag request using our uTags instance
                 plugin.createCustomTagRequest(player, tag);
             } else if (event.getMessage().equalsIgnoreCase("decline")) {
-                player.sendMessage(ChatColor.RED + "You have declined to request this tag. Please try again.");
+                Utils.sendError(player, "You have declined to request this tag. Please try again.");
             } else {
-                player.sendMessage(ChatColor.RED + "Invalid Response. Please make a new tag request.");
+                Utils.sendError(player, "Invalid Response. Please make a new tag request.");
             }
             
-            // Remove the preview tag
             plugin.getPreviewTags().remove(playerId);
         }
     }
