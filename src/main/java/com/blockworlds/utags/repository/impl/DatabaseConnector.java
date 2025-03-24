@@ -44,6 +44,8 @@ public class DatabaseConnector {
     
     /**
      * Creates a new DatabaseConnector with settings from plugin configuration.
+     *
+     * @param plugin The JavaPlugin instance
      */
     public DatabaseConnector(JavaPlugin plugin) {
         this.plugin = plugin;
