@@ -1,21 +1,22 @@
 package com.blockworlds.utags.services;
 
-import com.blockworlds.utags.Tag;
-import com.blockworlds.utags.TagType;
-import com.blockworlds.utags.uTags;
-import com.blockworlds.utags.utils.ErrorHandler;
+import com.blockworlds.utags.model.Tag;
+import com.blockworlds.utags.model.TagType;
+import com.blockworlds.utags.util.ErrorHandler;
+import org.bukkit.Bukkit;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Service class for caching frequently accessed data in the uTags plugin.
@@ -35,50 +36,46 @@ public class CacheService {
     // Configuration
     private final long defaultExpirationMs;
     private final boolean statsEnabled;
+    private final long cleanupIntervalTicks;
     
     // Plugin reference and utilities
-    private final uTags plugin;
+    private final JavaPlugin plugin;
     private final ErrorHandler errorHandler;
+    private final Logger logger;
     
-    // Executor for cleanup tasks
-    private final ScheduledExecutorService cleanupExecutor;
+    // Cleanup task
+    private BukkitTask cleanupTask;
 
     /**
      * Creates a new CacheService with the specified configuration.
      *
-     * @param plugin The uTags plugin instance
+     * @param plugin The JavaPlugin instance
      * @param errorHandler The error handler to use
      * @param defaultExpirationMs Default cache entry expiration time in milliseconds
      * @param statsEnabled Whether to track and report cache statistics
      */
-    public CacheService(uTags plugin, ErrorHandler errorHandler, long defaultExpirationMs, boolean statsEnabled) {
+    public CacheService(JavaPlugin plugin, ErrorHandler errorHandler, long defaultExpirationMs, boolean statsEnabled) {
         this.plugin = plugin;
         this.errorHandler = errorHandler;
+        this.logger = plugin.getLogger();
         this.defaultExpirationMs = defaultExpirationMs;
         this.statsEnabled = statsEnabled;
         
         // Initialize thread-safe cache
         this.cache = new ConcurrentHashMap<>();
         
-        // Initialize cleanup executor
-        this.cleanupExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread thread = new Thread(r, "uTags-Cache-Cleanup");
-            thread.setDaemon(true);
-            return thread;
-        });
+        // Set cleanup interval (every 5 minutes by default)
+        this.cleanupIntervalTicks = defaultExpirationMs / 1000 * 20 / 2; // Half the expiration time, in ticks
         
         // Schedule periodic cleanup
-        this.cleanupExecutor.scheduleAtFixedRate(
-            this::cleanupExpiredEntries, 
-            defaultExpirationMs / 2, 
-            defaultExpirationMs / 2, 
-            TimeUnit.MILLISECONDS
-        );
+        this.cleanupTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
+            plugin, this::cleanupExpiredEntries, 
+            cleanupIntervalTicks, cleanupIntervalTicks);
         
         // Log cache initialization
-        plugin.getLogger().info("CacheService initialized with " + 
-                               (defaultExpirationMs / 1000) + "s expiration time. " +
-                               "Statistics tracking: " + (statsEnabled ? "enabled" : "disabled"));
+        logger.info("CacheService initialized with " + 
+                   (defaultExpirationMs / 1000) + "s expiration time. " +
+                   "Statistics tracking: " + (statsEnabled ? "enabled" : "disabled"));
     }
     
     /**
@@ -146,7 +143,20 @@ public class CacheService {
      */
     public List<Tag> getAvailableTags(TagType tagType) {
         CacheKey key = CacheKey.forAvailableTags(tagType);
-        return getOrLoad(key, () -> plugin.getDatabaseManager().getAvailableTags(tagType));
+        List<Tag> tags = (List<Tag>) cache.get(key);
+        
+        if (tags != null && !((CacheEntry<?>)cache.get(key)).isExpired()) {
+            if (statsEnabled) {
+                hits.incrementAndGet();
+            }
+            return tags;
+        }
+        
+        // If not in cache, return null to indicate a cache miss
+        if (statsEnabled) {
+            misses.incrementAndGet();
+        }
+        return null;
     }
     
     /**
@@ -157,8 +167,22 @@ public class CacheService {
      */
     public String getTagNameByDisplay(String display) {
         if (display == null) return null;
+        
         CacheKey key = CacheKey.forTagNameByDisplay(display);
-        return getOrLoad(key, () -> plugin.getDatabaseManager().getTagNameByDisplay(display));
+        CacheEntry<?> entry = cache.get(key);
+        
+        if (entry != null && !entry.isExpired()) {
+            if (statsEnabled) {
+                hits.incrementAndGet();
+            }
+            return (String) entry.getValue();
+        }
+        
+        // If not in cache, return null to indicate a cache miss
+        if (statsEnabled) {
+            misses.incrementAndGet();
+        }
+        return null;
     }
     
     /**
@@ -169,8 +193,22 @@ public class CacheService {
      */
     public String getTagDisplayByName(String name) {
         if (name == null) return null;
+        
         CacheKey key = CacheKey.forTagDisplayByName(name);
-        return getOrLoad(key, () -> plugin.getDatabaseManager().getTagDisplayByName(name));
+        CacheEntry<?> entry = cache.get(key);
+        
+        if (entry != null && !entry.isExpired()) {
+            if (statsEnabled) {
+                hits.incrementAndGet();
+            }
+            return (String) entry.getValue();
+        }
+        
+        // If not in cache, return null to indicate a cache miss
+        if (statsEnabled) {
+            misses.incrementAndGet();
+        }
+        return null;
     }
     
     /**
@@ -179,10 +217,24 @@ public class CacheService {
      * @param playerName The name of the player
      * @return The number of custom tags
      */
-    public int countCustomTags(String playerName) {
+    public Integer countCustomTags(String playerName) {
         if (playerName == null) return 0;
+        
         CacheKey key = CacheKey.forCustomTagCount(playerName);
-        return getOrLoad(key, () -> plugin.getDatabaseManager().countCustomTags(playerName));
+        CacheEntry<?> entry = cache.get(key);
+        
+        if (entry != null && !entry.isExpired()) {
+            if (statsEnabled) {
+                hits.incrementAndGet();
+            }
+            return (Integer) entry.getValue();
+        }
+        
+        // If not in cache, return null to indicate a cache miss
+        if (statsEnabled) {
+            misses.incrementAndGet();
+        }
+        return null;
     }
     
     /**
@@ -204,12 +256,6 @@ public class CacheService {
         
         // Invalidate tag display
         invalidate(CacheKey.forTagDisplayByName(tagName));
-        
-        // Invalidate tag display-to-name mapping
-        String tagDisplay = plugin.getDatabaseManager().getTagDisplayByName(tagName);
-        if (tagDisplay != null) {
-            invalidate(CacheKey.forTagNameByDisplay(tagDisplay));
-        }
         
         // Invalidate available tags lists
         invalidate(CacheKey.forAvailableTags(TagType.PREFIX));
@@ -246,8 +292,6 @@ public class CacheService {
         if (playerName != null) {
             invalidate(CacheKey.forCustomTagCount(playerName));
         }
-        
-        // Invalidate other player-specific data as needed
     }
     
     /**
@@ -267,7 +311,7 @@ public class CacheService {
             int removedCount = beforeSize - cache.size();
             
             if (removedCount > 0 && statsEnabled) {
-                plugin.getLogger().fine("Cleaned up " + removedCount + " expired cache entries. Current cache size: " + cache.size());
+                logger.fine("Cleaned up " + removedCount + " expired cache entries. Current cache size: " + cache.size());
             }
         } catch (Exception e) {
             errorHandler.logError("Error during cache cleanup", e);
@@ -299,7 +343,7 @@ public class CacheService {
      */
     public void logStatistics() {
         if (statsEnabled) {
-            plugin.getLogger().info(getStatistics());
+            logger.info(getStatistics());
         }
     }
     
@@ -308,16 +352,17 @@ public class CacheService {
      */
     public void shutdown() {
         try {
-            cleanupExecutor.shutdown();
-            if (!cleanupExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                cleanupExecutor.shutdownNow();
+            if (cleanupTask != null) {
+                cleanupTask.cancel();
+                cleanupTask = null;
             }
+            
             if (statsEnabled) {
                 logStatistics();
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            errorHandler.logWarning("Cache service shutdown interrupted");
+            
+            cache.clear();
+            logger.info("Cache service shutdown complete");
         } catch (Exception e) {
             errorHandler.logError("Error shutting down cache service", e);
         }
