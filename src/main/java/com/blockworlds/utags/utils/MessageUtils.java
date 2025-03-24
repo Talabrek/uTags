@@ -1,64 +1,110 @@
-package com.blockworlds.utags.utils;
+package com.blockworlds.utags.util;
 
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
-
-import java.util.ArrayList;
-import java.util.List;
+import com.blockworlds.utags.config.ConfigurationManager;
 
 /**
  * Utility class for message-related operations in the uTags plugin.
  * Provides methods for formatting and sending messages to players.
  */
 public class MessageUtils {
-
-    // Common message prefixes
-    public static final String PREFIX_INFO = ChatColor.AQUA + "[uTags] " + ChatColor.WHITE;
-    public static final String PREFIX_SUCCESS = ChatColor.GREEN + "[uTags] " + ChatColor.GREEN;
-    public static final String PREFIX_ERROR = ChatColor.RED + "[uTags] " + ChatColor.RED;
-    public static final String PREFIX_WARNING = ChatColor.GOLD + "[uTags] " + ChatColor.YELLOW;
-
+    private static ConfigurationManager configManager;
+    
+    /**
+     * Initialize with ConfigurationManager
+     * @param configManager The configuration manager
+     */
+    public static void init(ConfigurationManager configManager) {
+        MessageUtils.configManager = configManager;
+    }
+    
     /**
      * Sends an informational message to a player.
      *
      * @param sender The recipient of the message
-     * @param message The message to send
+     * @param message The message to send or message key
+     * @param args Optional arguments for message formatting
      */
-    public static void sendInfo(CommandSender sender, String message) {
-        sender.sendMessage(PREFIX_INFO + colorize(message));
+    public static void sendInfo(CommandSender sender, String message, Object... args) {
+        sender.sendMessage(colorize(getPrefix("info") + formatMessage(message, args)));
     }
-
+    
     /**
      * Sends a success message to a player.
      *
      * @param sender The recipient of the message
-     * @param message The message to send
+     * @param message The message to send or message key
+     * @param args Optional arguments for message formatting
      */
-    public static void sendSuccess(CommandSender sender, String message) {
-        sender.sendMessage(PREFIX_SUCCESS + colorize(message));
+    public static void sendSuccess(CommandSender sender, String message, Object... args) {
+        sender.sendMessage(colorize(getPrefix("success") + formatMessage(message, args)));
     }
-
+    
     /**
      * Sends an error message to a player.
      *
      * @param sender The recipient of the message
-     * @param message The message to send
+     * @param message The message to send or message key
+     * @param args Optional arguments for message formatting
      */
-    public static void sendError(CommandSender sender, String message) {
-        sender.sendMessage(PREFIX_ERROR + colorize(message));
+    public static void sendError(CommandSender sender, String message, Object... args) {
+        sender.sendMessage(colorize(getPrefix("error") + formatMessage(message, args)));
     }
-
+    
     /**
      * Sends a warning message to a player.
      *
      * @param sender The recipient of the message
-     * @param message The message to send
+     * @param message The message to send or message key
+     * @param args Optional arguments for message formatting
      */
-    public static void sendWarning(CommandSender sender, String message) {
-        sender.sendMessage(PREFIX_WARNING + colorize(message));
+    public static void sendWarning(CommandSender sender, String message, Object... args) {
+        sender.sendMessage(colorize(getPrefix("warning") + formatMessage(message, args)));
     }
-
+    
+    /**
+     * Gets a message prefix from configuration or uses default if configuration isn't initialized.
+     *
+     * @param type The prefix type (info, success, error, warning)
+     * @return The prefix
+     */
+    private static String getPrefix(String type) {
+        if (configManager == null) {
+            // Default prefixes if config isn't initialized
+            switch (type) {
+                case "info": return ChatColor.AQUA + "[uTags] " + ChatColor.WHITE;
+                case "success": return ChatColor.GREEN + "[uTags] " + ChatColor.GREEN;
+                case "error": return ChatColor.RED + "[uTags] " + ChatColor.RED;
+                case "warning": return ChatColor.GOLD + "[uTags] " + ChatColor.YELLOW;
+                default: return "[uTags] ";
+            }
+        }
+        return configManager.getMessage("prefix." + type);
+    }
+    
+    /**
+     * Formats a message with arguments.
+     *
+     * @param message The message to format
+     * @param args Arguments for formatting
+     * @return The formatted message
+     */
+    private static String formatMessage(String message, Object... args) {
+        if (configManager != null && message.startsWith("msg.")) {
+            message = configManager.getMessage(message.substring(4));
+        }
+        
+        if (args.length > 0) {
+            for (int i = 0; i < args.length; i++) {
+                message = message.replace("{" + i + "}", String.valueOf(args[i]));
+            }
+        }
+        
+        return message;
+    }
+    
     /**
      * Translates color codes in a string.
      *
@@ -71,54 +117,18 @@ public class MessageUtils {
         }
         return ChatColor.translateAlternateColorCodes('&', text);
     }
-
-    /**
-     * Translates color codes in a list of strings.
-     *
-     * @param textList The list of texts to colorize
-     * @return The list of colorized strings
-     */
-    public static List<String> colorizeStringList(List<String> textList) {
-        List<String> colorizedList = new ArrayList<>();
-        
-        if (textList == null || textList.isEmpty()) {
-            return colorizedList;
-        }
-        
-        for (String text : textList) {
-            colorizedList.add(colorize(text));
-        }
-        
-        return colorizedList;
-    }
-
-    /**
-     * Sends a message about tag operations.
-     *
-     * @param player The player to send the message to
-     * @param tagType The type of tag (PREFIX/SUFFIX)
-     * @param tagDisplay The tag display text
-     * @param isSuccess Whether the operation was successful
-     */
-    public static void sendTagOperationMessage(Player player, String tagType, String tagDisplay, boolean isSuccess) {
-        if (isSuccess) {
-            player.sendMessage(ChatColor.GREEN + "Your " + tagType + " has been updated to: " + 
-                               ChatColor.translateAlternateColorCodes('&', tagDisplay));
-        } else {
-            player.sendMessage(ChatColor.RED + "Failed to update your " + tagType + ".");
-        }
-    }
-
+    
     /**
      * Shows color code help to a player.
      *
      * @param player The player to show the help to
      */
     public static void showColorCodes(Player player) {
-        ChatColor[] colors = {ChatColor.BLACK, ChatColor.DARK_BLUE, ChatColor.DARK_GREEN, ChatColor.DARK_AQUA, 
-                              ChatColor.DARK_RED, ChatColor.DARK_PURPLE, ChatColor.GOLD, ChatColor.GRAY, 
-                              ChatColor.DARK_GRAY, ChatColor.BLUE, ChatColor.GREEN, ChatColor.AQUA, 
-                              ChatColor.RED, ChatColor.LIGHT_PURPLE, ChatColor.YELLOW, ChatColor.WHITE};
+        ChatColor[] colors = {ChatColor.BLACK, ChatColor.DARK_BLUE, ChatColor.DARK_GREEN, 
+                            ChatColor.DARK_AQUA, ChatColor.DARK_RED, ChatColor.DARK_PURPLE, 
+                            ChatColor.GOLD, ChatColor.GRAY, ChatColor.DARK_GRAY, ChatColor.BLUE, 
+                            ChatColor.GREEN, ChatColor.AQUA, ChatColor.RED, ChatColor.LIGHT_PURPLE, 
+                            ChatColor.YELLOW, ChatColor.WHITE};
         String[] colorCodes = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"};
         StringBuilder colorCodeList = new StringBuilder(ChatColor.AQUA + "List of available color codes: ");
         
