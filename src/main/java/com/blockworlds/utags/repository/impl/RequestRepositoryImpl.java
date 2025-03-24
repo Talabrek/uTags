@@ -29,6 +29,9 @@ public class RequestRepositoryImpl implements RequestRepository {
     
     /**
      * Creates a new RequestRepositoryImpl.
+     *
+     * @param connector The database connector
+     * @param logger The logger instance
      */
     public RequestRepositoryImpl(DatabaseConnector connector, Logger logger) {
         this.connector = connector;
@@ -55,6 +58,10 @@ public class RequestRepositoryImpl implements RequestRepository {
     
     @Override
     public Result<CustomTagRequest> getRequestByPlayerName(String playerName) {
+        if (playerName == null || playerName.isEmpty()) {
+            return Result.failure("Player name cannot be empty");
+        }
+        
         try (Connection conn = connector.getConnection();
              PreparedStatement stmt = conn.prepareStatement(SELECT_REQUEST_BY_PLAYER)) {
             
@@ -75,6 +82,18 @@ public class RequestRepositoryImpl implements RequestRepository {
     
     @Override
     public Result<Boolean> createRequest(UUID playerUuid, String playerName, String tagDisplay) {
+        if (playerUuid == null) {
+            return Result.failure("Player UUID cannot be null");
+        }
+        
+        if (playerName == null || playerName.isEmpty()) {
+            return Result.failure("Player name cannot be empty");
+        }
+        
+        if (tagDisplay == null || tagDisplay.isEmpty()) {
+            return Result.failure("Tag display cannot be empty");
+        }
+        
         try (Connection conn = connector.getConnection()) {
             // Check if request already exists for this player
             boolean exists = false;
@@ -88,25 +107,20 @@ public class RequestRepositoryImpl implements RequestRepository {
             }
             
             // Update existing or insert new request
-            PreparedStatement stmt;
-            if (exists) {
-                stmt = conn.prepareStatement(UPDATE_REQUEST);
-                stmt.setString(1, playerName);
-                stmt.setString(2, tagDisplay);
-                stmt.setString(3, playerUuid.toString());
-            } else {
-                stmt = conn.prepareStatement(INSERT_REQUEST);
-                stmt.setString(1, playerUuid.toString());
-                stmt.setString(2, playerName);
-                stmt.setString(3, tagDisplay);
-            }
-            
-            try {
+            String sql = exists ? UPDATE_REQUEST : INSERT_REQUEST;
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                if (exists) {
+                    stmt.setString(1, playerName);
+                    stmt.setString(2, tagDisplay);
+                    stmt.setString(3, playerUuid.toString());
+                } else {
+                    stmt.setString(1, playerUuid.toString());
+                    stmt.setString(2, playerName);
+                    stmt.setString(3, tagDisplay);
+                }
+                
                 int affected = stmt.executeUpdate();
-                stmt.close();
                 return Result.success(affected > 0);
-            } finally {
-                try { stmt.close(); } catch (Exception ignored) {}
             }
         } catch (SQLException e) {
             logger.warning("Error creating tag request: " + e.getMessage());
@@ -116,6 +130,10 @@ public class RequestRepositoryImpl implements RequestRepository {
     
     @Override
     public Result<Boolean> removeRequest(int requestId) {
+        if (requestId <= 0) {
+            return Result.failure("Invalid request ID");
+        }
+        
         try (Connection conn = connector.getConnection();
              PreparedStatement stmt = conn.prepareStatement(DELETE_REQUEST)) {
             
@@ -161,6 +179,10 @@ public class RequestRepositoryImpl implements RequestRepository {
     
     /**
      * Creates a CustomTagRequest object from a ResultSet row.
+     *
+     * @param rs The ResultSet containing request data
+     * @return A CustomTagRequest object
+     * @throws SQLException If there is an error reading from the ResultSet
      */
     private CustomTagRequest createRequestFromResultSet(ResultSet rs) throws SQLException {
         return new CustomTagRequest(
