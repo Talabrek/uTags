@@ -89,17 +89,21 @@ public class DatabaseConnector {
      * Creates required tables if they don't exist.
      */
     private void createTablesIfNeeded() {
-        try (Connection conn = getConnection();
-             Statement stmt = conn.createStatement()) {
-            
-            stmt.executeUpdate(CREATE_TAGS_TABLE);
-            stmt.executeUpdate(CREATE_REQUESTS_TABLE);
-            logger.info("Database tables checked");
-        } catch (SQLException e) {
-            logger.severe("Error creating database tables: " + e.getMessage());
-            throw new RuntimeException("Failed to initialize database", e);
-        }
+    try (Connection conn = getConnection();
+         Statement stmt = conn.createStatement()) {
+        
+        stmt.executeUpdate(CREATE_TAGS_TABLE);
+        stmt.executeUpdate(CREATE_REQUESTS_TABLE);
+        logger.info("Database tables checked");
+    } catch (SQLException e) {
+        logger.severe("Error creating database tables: " + e.getMessage());
+        // Instead of throwing RuntimeException, set a flag
+        databaseInitialized = false;
+        // Let the plugin gracefully handle this
+        plugin.getServer().getScheduler().runTask(plugin, () -> 
+            plugin.getLogger().severe("Database initialization failed. Plugin may not function correctly."));
     }
+}
     
     /**
      * Closes the connection pool.
