@@ -6,21 +6,17 @@ default-tag: "member"
 # Database Configuration
 database:
   schema: 3
-  # You can use environment variables for these settings:
+  # You can use environment variables instead:
   # - UTAGS_DATABASE_HOST
   # - UTAGS_DATABASE_PORT
   # - UTAGS_DATABASE_DATABASE
   # - UTAGS_DATABASE_USERNAME
   # - UTAGS_DATABASE_PASSWORD
-  host: "your_host"
+  host: "localhost"
   port: 3306
-  database: "your_database"
-  username: "your_username"
-  password: "change_me"  # Use /tag admin encrypt to secure this
-  
-  # Connection retry settings
-  connection-retries: 3
-  retry-delay-ms: 200
+  database: "utags"
+  username: "root"
+  password: "change_me"
   
   # Connection pool settings
   pool:
@@ -28,20 +24,10 @@ database:
     min-idle: 3
     idle-timeout: 30000
     connection-timeout: 10000
-    validation-timeout: 5000
-    max-lifetime: 1800000
-    leak-detection-threshold: 30000
-    initialization-fail-timeout: 10000
-  
-  # Health check settings (in ticks, 20 ticks = 1 second)
-  health-check-interval: 12000 # 10 minutes
 
 # Security Settings
 security:
-  # Enables password encryption in the config file
-  encryption-enabled: false
-  
-  # Security logging
+  # Logging
   log-unauthorized-attempts: true
   
   # Rate limiting
@@ -49,20 +35,9 @@ security:
   attempt-expiration-seconds: 300
   
   # Input validation
-  strict-validation: true
   max-tag-name-length: 64
   max-tag-display-length: 128
   max-effective-display-length: 32  # Length after color codes removed
-  
-  # Permission checks
-  verify-all-transactions: true
-  
-  # Session protection
-  menu-timeout-seconds: 300
-  prevent-menu-stealing: true
-  
-  # Protection against SQL injection
-  sanitize-inputs: true
 
 # Performance Optimization Settings
 performance:
@@ -70,7 +45,6 @@ performance:
   caching:
     enabled: true
     expiration-seconds: 300    # 5 minutes
-    statistics: true           # Track cache hit/miss rates
   
   # Async operation settings
   async:
@@ -81,42 +55,9 @@ performance:
     enabled: true
     size: 20                   # Maximum batch size
     interval-seconds: 5        # Process batches every 5 seconds
-    auto-flush: true           # Automatically flush batches when they reach the size
-  
-  # Inventory optimization settings
-  inventory:
-    optimization: true
-    templates: true            # Use inventory templates
-    item-pooling: true         # Use item pooling
-    page-cache-size: 10        # Maximum number of tag pages to cache
-  
-  # Performance logging
-  logging:
-    enabled: true
-    interval-minutes: 30       # Log performance stats every 30 minutes
-    tps-threshold: 18.0        # Only log detailed stats if TPS is below this threshold
 
 # UI Configuration
 frame-material: BLACK_STAINED_GLASS_PANE
-
-previous-button:
-  slot: 45
-  material: ARROW
-  display-name: '&bPrevious Page'
-
-next-button:
-  slot: 53
-  material: ARROW
-  display-name: '&bNext Page'
-
-return-button:
-  slot: 48
-  material: BARRIER
-  display-name: '&cReturn to Main Menu'
-
-player-head-button:
-  slot: 50
-  display-name: '&aYour current tag'
 
 # Notification commands for tag requests
 accept-command: "mail send %player% Your custom tag request has been accepted!"
