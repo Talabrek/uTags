@@ -1,4 +1,4 @@
-package com.blockworlds.utags.utils;
+package com.blockworlds.utags.util;
 
 import org.bukkit.entity.Player;
 
@@ -7,14 +7,13 @@ import org.bukkit.entity.Player;
  * Provides methods for checking and working with player permissions.
  */
 public class PermissionUtils {
-
     // Permission constants
     public static final String PERM_TAG_BASE = "utags.tag";
     public static final String PERM_ADMIN = "utags.admin";
     public static final String PERM_STAFF = "utags.staff";
     public static final String PERM_TAG_COLOR = "utags.tagcolor";
     public static final String PERM_CUSTOM_PREFIX = "utags.custom";
-
+    
     /**
      * Checks if a player has permission to use a specific tag.
      *
@@ -39,7 +38,7 @@ public class PermissionUtils {
         
         return false;
     }
-
+    
     /**
      * Checks if a player has admin permissions.
      *
@@ -49,7 +48,7 @@ public class PermissionUtils {
     public static boolean hasAdminPermission(Player player) {
         return player != null && player.hasPermission(PERM_ADMIN);
     }
-
+    
     /**
      * Checks if a player has staff permissions.
      *
@@ -59,7 +58,7 @@ public class PermissionUtils {
     public static boolean hasStaffPermission(Player player) {
         return player != null && player.hasPermission(PERM_STAFF);
     }
-
+    
     /**
      * Checks if a player has color changing permissions.
      *
@@ -69,7 +68,7 @@ public class PermissionUtils {
     public static boolean hasColorPermission(Player player) {
         return player != null && player.hasPermission(PERM_TAG_COLOR);
     }
-
+    
     /**
      * Checks if a player has permission for a custom tag slot.
      *
@@ -84,7 +83,7 @@ public class PermissionUtils {
         
         return player.hasPermission(PERM_CUSTOM_PREFIX + slotNumber);
     }
-
+    
     /**
      * Checks if a player has a specific custom tag.
      *
@@ -99,7 +98,7 @@ public class PermissionUtils {
         
         return player.hasPermission(PERM_TAG_BASE + "." + player.getName() + slotNumber);
     }
-
+    
     /**
      * Gets the next available custom tag slot for a player.
      *
@@ -119,7 +118,7 @@ public class PermissionUtils {
         
         return 0;
     }
-
+    
     /**
      * Counts how many custom tag slots a player has permission to use.
      *
