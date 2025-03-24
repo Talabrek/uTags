@@ -39,11 +39,14 @@ public class DatabaseConnector {
     
     private final HikariDataSource dataSource;
     private final Logger logger;
+    private final JavaPlugin plugin;
+    private boolean databaseInitialized = false;
     
     /**
      * Creates a new DatabaseConnector with settings from plugin configuration.
      */
     public DatabaseConnector(JavaPlugin plugin) {
+        this.plugin = plugin;
         this.logger = plugin.getLogger();
         FileConfiguration config = plugin.getConfig();
         
@@ -75,35 +78,54 @@ public class DatabaseConnector {
         // Initialize pool
         this.dataSource = new HikariDataSource(hikariConfig);
         createTablesIfNeeded();
-        logger.info("Database connection pool initialized");
+        
+        if (databaseInitialized) {
+            logger.info("Database connection pool initialized successfully");
+        }
     }
     
     /**
      * Gets a connection from the pool.
+     * 
+     * @return A database connection
+     * @throws SQLException If a connection cannot be obtained
      */
     public Connection getConnection() throws SQLException {
+        if (!databaseInitialized) {
+            throw new SQLException("Database is not properly initialized");
+        }
         return dataSource.getConnection();
+    }
+    
+    /**
+     * Checks if the database is properly initialized.
+     * 
+     * @return true if the database is initialized, false otherwise
+     */
+    public boolean isDatabaseInitialized() {
+        return databaseInitialized;
     }
     
     /**
      * Creates required tables if they don't exist.
      */
     private void createTablesIfNeeded() {
-    try (Connection conn = getConnection();
-         Statement stmt = conn.createStatement()) {
-        
-        stmt.executeUpdate(CREATE_TAGS_TABLE);
-        stmt.executeUpdate(CREATE_REQUESTS_TABLE);
-        logger.info("Database tables checked");
-    } catch (SQLException e) {
-        logger.severe("Error creating database tables: " + e.getMessage());
-        // Instead of throwing RuntimeException, set a flag
-        databaseInitialized = false;
-        // Let the plugin gracefully handle this
-        plugin.getServer().getScheduler().runTask(plugin, () -> 
-            plugin.getLogger().severe("Database initialization failed. Plugin may not function correctly."));
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement()) {
+            
+            stmt.executeUpdate(CREATE_TAGS_TABLE);
+            stmt.executeUpdate(CREATE_REQUESTS_TABLE);
+            logger.info("Database tables checked");
+            databaseInitialized = true;
+        } catch (SQLException e) {
+            logger.severe("Error creating database tables: " + e.getMessage());
+            // Instead of throwing RuntimeException, set a flag
+            databaseInitialized = false;
+            // Let the plugin gracefully handle this
+            plugin.getServer().getScheduler().runTask(plugin, () -> 
+                plugin.getLogger().severe("Database initialization failed. Plugin may not function correctly."));
+        }
     }
-}
     
     /**
      * Closes the connection pool.
@@ -117,8 +139,13 @@ public class DatabaseConnector {
     
     /**
      * Gets statistics about the connection pool.
+     * 
+     * @return A string containing pool statistics
      */
     public String getPoolStats() {
+        if (dataSource == null || dataSource.isClosed()) {
+            return "Pool is closed";
+        }
         return String.format("Pool Stats - Active: %d, Idle: %d, Total: %d", 
             dataSource.getHikariPoolMXBean().getActiveConnections(),
             dataSource.getHikariPoolMXBean().getIdleConnections(),
