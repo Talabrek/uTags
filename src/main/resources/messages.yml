@@ -1,0 +1,78 @@
+# uTags Messages Configuration
+# You can customize all plugin messages here
+
+# Message prefixes
+prefix:
+  info: "&b[uTags] &f"
+  success: "&a[uTags] &a"
+  error: "&c[uTags] &c"
+  warning: "&e[uTags] &e"
+
+# General messages
+general:
+  plugin-enabled: "uTags has been enabled"
+  plugin-disabled: "uTags has been disabled"
+  no-permission: "You don't have permission to use this command"
+  player-only: "This command can only be used by players"
+
+# Command messages
+command:
+  invalid: "Invalid command. Use /tag help for a list of available commands"
+  usage:
+    tag: "Usage: /tag"
+    set: "Usage: /tag set [tag]"
+    request: "Usage: /tag request [tag]"
+    admin: "Usage: /tag admin [create|delete|edit|requests|purge]"
+
+# Tag creation and management
+tag:
+  created: "Tag '{0}' has been created"
+  deleted: "Tag '{0}' has been deleted"
+  edited: "Tag '{0}' has been edited"
+  not-found: "Tag '{0}' does not exist"
+  set-success: "Your {0} has been updated to: {1}"
+  set-failure: "Failed to update your {0}"
+
+# Tag requests
+request:
+  submitted: "Your tag request has been submitted!"
+  error: "An error occurred while submitting your tag request"
+  accepted: "Tag request accepted"
+  denied: "Tag request denied"
+  pending: "There are pending tag requests. Use /tag admin requests to view them"
+  preview: "Tag request preview: {0}"
+  confirm: "Type 'accept' to confirm the tag or 'decline' to try again"
+
+# Tag request rules
+request-rules:
+  header: "Tag Request Rules:"
+  rule1: "1. The tag must start with a color code"
+  rule2: "2. The tag must be surrounded by square brackets ([ and ])"
+  rule3: "3. The tag must be a maximum of 15 characters long"
+  rule4: "4. The tag must not contain formatting codes (&k, &l, etc)"
+
+# Validation errors
+validation:
+  tag-empty: "Tag cannot be empty"
+  tag-no-color: "A valid tag must contain at least one color code (e.g., &a, &b)"
+  tag-has-formatting: "A valid tag must not contain formatting codes such as &n or &k"
+  tag-no-brackets: "A valid tag must be surrounded by [ and ] brackets"
+  tag-too-long: "A valid tag must be at most 15 characters long (excluding color codes)"
+  tag-invalid-format: "Invalid tag format - brackets must be properly ordered"
+  tag-name-invalid: "Invalid tag name. Tag names must contain only letters, numbers, underscores, and hyphens"
+
+# Error messages
+error:
+  unexpected: "An unexpected error occurred while {0}. Please contact an administrator"
+  database: "A database error occurred. Please try again later"
+
+# Color codes help
+color-codes:
+  header: "&bList of available color codes:"
+  colors: "&0,&1,&2,&3,&4,&5,&6,&7,&8,&9,&a,&b,&c,&d,&e,&f"
+  codes: "0,1,2,3,4,5,6,7,8,9,a,b,c,d,e,f"
+
+# Admin messages
+admin:
+  purge-tags: "All data has been purged from the tags table"
+  purge-requests: "All data has been purged from the requests table"
