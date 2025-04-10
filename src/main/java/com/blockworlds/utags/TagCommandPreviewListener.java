@@ -26,8 +26,9 @@ public class TagCommandPreviewListener implements Listener {
             String tag = plugin.getPreviewTags().get(playerId);
 
             if (event.getMessage().equalsIgnoreCase("accept")) {
-                // Handle the tag request
-                plugin.createCustomTagRequest(player, tag);
+                // Handle the tag request asynchronously
+                plugin.createCustomTagRequestAsync(player, tag);
+                // Feedback is handled within the async method
             } else if (event.getMessage().equalsIgnoreCase("decline")) {
                 player.sendMessage(ChatColor.RED + "You have declined to request this tag. Please try again.");
             } else {

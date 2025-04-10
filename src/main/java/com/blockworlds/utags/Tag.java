@@ -1,9 +1,5 @@
 package com.blockworlds.utags;
 
-import com.blockworlds.utags.TagType;
-import org.bukkit.Material;
-import org.bukkit.inventory.ItemStack;
-
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 

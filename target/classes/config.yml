@@ -5,13 +5,18 @@ default-tag: "member"
 
 # Database Configuration
 database:
-  schema: 2
-  host: "your_host"
+  host: "localhost"
   port: 3306
-  database: "your_database"
-  username: "your_username"
-  password: "your_password"
+  database: "utags"
+  username: "user"
+  password: "password"
+  schema: 3 # Note: Schema version might need updating if DB structure changed significantly
+
+# --- GUI Configuration ---
 frame-material: BLACK_STAINED_GLASS_PANE
+
+# Note: Button slots below are currently hardcoded in listeners,
+# these config values are not actively used yet.
 previous-button:
   slot: 45
   material: ARROW
@@ -21,9 +26,67 @@ next-button:
   material: ARROW
   display-name: '&bNext Page'
 return-button:
-  slot: 48
+  slot: 48 # Used for Switch Prefix/Suffix button in TagMenuManager
   material: BARRIER
-  display-name: '&cReturn to Main Menu'
+  display-name: '&cReturn to Main Menu' # Not used, back button text is hardcoded
 player-head-button:
-  slot: 50
-  display-name: '&aYour current tag'
+  slot: 50 # Used for Remove Tag button in TagMenuManager
+  display-name: '&aYour current tag' # Not used, player head text is hardcoded
+
+# Lore for custom tag items in the /tag GUI
+gui:
+  custom-tag-items:
+    # Item shown when player has the slot permission but not the specific tag permission
+    unlocked-requestable:
+      lore:
+        - "&7You have unlocked this slot!"
+        - "&7Click here or use &f/tag request <display>"
+        - "&7to submit your custom tag."
+    # Item shown when player has the specific tag permission (tag is set or available)
+    # Placeholders: %display%, %internal_name%, %slot_number%
+    unlocked-set:
+      lore:
+        - "&7Display: %display%"
+        - " "
+        - "&eClick to Select"
+        - "&8ID: %internal_name%"
+    # Item shown when player lacks the permission for the slot
+    # Placeholders: %slot_number%
+    locked:
+      lore:
+        - "&7Unlock this slot by ranking up"
+        - "&7or visiting the server store."
+
+# Command configuration for notifications (optional)
+accept-command: "mail send %player% Your custom tag request has been accepted!"
+deny-command: "mail send %player% Your custom tag request has been denied."
+
+# --- Name Color Configuration ---
+# Define available name colors and their corresponding permissions (utags.namecolor.<key>)
+# Example: A player needs 'utags.namecolor.light_blue' to use the Light Blue color.
+name-colors:
+  Light Blue: "&b"
+  Green: "&a"
+  Red: "&c"
+  Yellow: "&e"
+  Gold: "&6"
+  Aqua: "&b"
+  Dark Aqua: "&3"
+  Dark Blue: "&1"
+  Dark Gray: "&8"
+  Dark Green: "&2"
+  Dark Purple: "&5"
+  Dark Red: "&4"
+  Gray: "&7"
+  Light Purple: "&d"
+  White: "&f"
+  # Add more colors as needed
+
+
+# --- Messages --- 
+messages:
+  no_permission: "&cYou do not have permission to use this command."
+  namecolor_usage: "&cUsage: /tag namecolor <&code|reset>"
+  namecolor_invalid_color: "&cInvalid color code. Use & followed by 0-9 or a-f, or use 'reset'."
+  namecolor_reset_success: "&aYour name color has been reset to default."
+  namecolor_success: "&aYour name color has been set to {color}&a."

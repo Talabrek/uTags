@@ -32,7 +32,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.2.4</version>
+                <version>3.4.1</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -41,10 +41,23 @@
                         </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <includes>
+                                    <include>com.zaxxer:HikariCP</include>
+                                </includes>
+                            </artifactSet>
+                            <relocations>
+                                <relocation>
+                                    <pattern>com.zaxxer.hikari</pattern>
+                                    <shadedPattern>com.blockworlds.utags.libs.hikari</shadedPattern>
+                                </relocation>
+                            </relocations>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
+
+
         </plugins>
         <resources>
             <resource>
@@ -52,6 +65,7 @@
                 <filtering>true</filtering>
             </resource>
         </resources>
+
     </build>
 
     <repositories>
@@ -63,13 +77,18 @@
             <id>sonatype</id>
             <url>https://oss.sonatype.org/content/groups/public/</url>
         </repository>
+        <repository>
+            <id>papermc-repo</id>
+            <url>https://repo.papermc.io/repository/maven-public/</url>
+        </repository>
     </repositories>
 
     <dependencies>
+        <!-- Use Paper API instead of Spigot -->
         <dependency>
-            <groupId>org.spigotmc</groupId>
-            <artifactId>spigot-api</artifactId>
-            <version>1.19.4-R0.1-SNAPSHOT</version>
+            <groupId>io.papermc.paper</groupId>
+            <artifactId>paper-api</artifactId>
+            <version>1.19.4-R0.1-SNAPSHOT</version> <!-- Ensure this version exists in the repo -->
             <scope>provided</scope>
         </dependency>
         <dependency>
@@ -83,7 +102,24 @@
         <dependency>
             <groupId>com.zaxxer</groupId>
             <artifactId>HikariCP</artifactId>
-            <version>5.1.0</version>
+            <version>5.0.1</version>
         </dependency>
+
+        <!-- Testing Dependencies Removed -->
     </dependencies>
+
+    <pluginRepositories>
+        <pluginRepository>
+            <id>spigotmc-repo</id>
+            <url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url>
+        </pluginRepository>
+        <pluginRepository>
+             <id>papermc-repo</id>
+             <url>https://repo.papermc.io/repository/maven-public/</url>
+        </pluginRepository>
+         <pluginRepository>
+            <id>sonatype</id>
+            <url>https://oss.sonatype.org/content/groups/public/</url>
+        </pluginRepository>
+    </pluginRepositories>
 </project>

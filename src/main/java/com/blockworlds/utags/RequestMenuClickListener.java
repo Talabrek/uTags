@@ -18,6 +18,11 @@ public class RequestMenuClickListener implements Listener {
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
+        // Check if the clicker is a player
+        if (!(event.getWhoClicked() instanceof Player)) {
+            return;
+        }
+        
         Inventory inventory = event.getClickedInventory();
         Player player = (Player) event.getWhoClicked();
 

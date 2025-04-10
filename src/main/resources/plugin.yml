@@ -15,6 +15,11 @@ commands:
     usage: /<command> [request] [tag]
     permission: utags.tag
     permission-message: You don't have permission to use this command.
+  name: # Changed command name
+    description: Opens the name color selection menu.
+    usage: /<command>
+    permission: utags.name.gui # Changed permission node
+    permission-message: You don't have permission to change your name color.
 
 permissions:
   utags.tag:
@@ -23,3 +28,19 @@ permissions:
   utags.tagcolor:
     description: Allows the player to change the color of their tag
     default: false
+  utags.name.gui: # Changed permission node
+    description: Allows the player to use the /name command to open the GUI.
+    default: true # Or false, depending on desired default access
+  utags.namecolor.*:
+    description: Allows access to all defined name colors.
+    default: op # Or false/true depending on desired default access
+    children:
+      utags.namecolor.light_blue: true
+      utags.namecolor.green: true
+      utags.namecolor.red: true
+      utags.namecolor.yellow: true
+      # Add children nodes for other colors defined in config.yml if needed for finer control,
+      # otherwise utags.namecolor.* grants access to all configured colors.
+      # Example:
+      # utags.namecolor.gold: true
+      # utags.namecolor.aqua: true
