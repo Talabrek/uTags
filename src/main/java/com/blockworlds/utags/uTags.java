@@ -815,9 +815,12 @@ public class uTags extends JavaPlugin {
 
     public void acceptCustomTagRequest(CustomTagRequest request) {
         try (Connection connection = getConnection()) {
-            String permission = "utags.tag." + request.getPlayerName() + (countCustomTags(request.getPlayerName()) + 1);
+            // Get count once to avoid race condition between permission and tag creation
+            int customTagNumber = countCustomTags(request.getPlayerName()) + 1;
+            String tagName = request.getPlayerName() + customTagNumber;
+            String permission = "utags.tag." + tagName;
             // Add the new tag to the tags table
-            addTagToDatabase(new Tag(request.getPlayerName() + (countCustomTags(request.getPlayerName()) + 1), request.getTagDisplay(), TagType.PREFIX, false, false, new ItemStack(Material.PLAYER_HEAD),1));
+            addTagToDatabase(new Tag(tagName, request.getTagDisplay(), TagType.PREFIX, false, false, new ItemStack(Material.PLAYER_HEAD), 1));
 
             // Remove the request from the tag_requests table
             removeCustomRequestFromDatabase(request);
@@ -910,12 +913,12 @@ public class uTags extends JavaPlugin {
     public boolean editTagAttribute(String tagName, String attribute, String newValue) {
         // List of allowed attribute names to prevent SQL injection
         Set<String> allowedAttributes = new HashSet<>(Arrays.asList("name", "display", "type", "public", "color", "material", "weight"));
-        
+
         // Verify the attribute is valid
         if (!allowedAttributes.contains(attribute.toLowerCase())) {
             return false;
         }
-        
+
         try (Connection connection = getConnection();
              PreparedStatement statement = connection.prepareStatement("SELECT * FROM tags WHERE name = ?")) {
             statement.setString(1, tagName);
@@ -937,9 +940,35 @@ public class uTags extends JavaPlugin {
                 case "weight": sql = "UPDATE tags SET weight = ? WHERE name = ?"; break;
                 default: return false; // This shouldn't happen due to the validation above
             }
-            
+
             try (PreparedStatement updateStatement = connection.prepareStatement(sql)) {
-                updateStatement.setString(1, newValue);
+                // Set the appropriate type based on the attribute
+                switch(attribute.toLowerCase()) {
+                    case "weight":
+                        try {
+                            updateStatement.setInt(1, Integer.parseInt(newValue));
+                        } catch (NumberFormatException e) {
+                            getLogger().warning("Invalid integer value for weight: " + newValue);
+                            return false;
+                        }
+                        break;
+                    case "public":
+                    case "color":
+                        updateStatement.setBoolean(1, Boolean.parseBoolean(newValue));
+                        break;
+                    case "type":
+                        // Validate enum value
+                        String upperValue = newValue.toUpperCase();
+                        if (!upperValue.equals("PREFIX") && !upperValue.equals("SUFFIX") && !upperValue.equals("BOTH")) {
+                            getLogger().warning("Invalid type value: " + newValue + ". Must be PREFIX, SUFFIX, or BOTH.");
+                            return false;
+                        }
+                        updateStatement.setString(1, upperValue.toLowerCase());
+                        break;
+                    default:
+                        updateStatement.setString(1, newValue);
+                        break;
+                }
                 updateStatement.setString(2, tagName);
                 updateStatement.executeUpdate();
                 return true;
@@ -948,8 +977,8 @@ public class uTags extends JavaPlugin {
             getLogger().severe("Error updating tag attribute: " + e.getMessage());
             e.printStackTrace();
         }
-            return false;
-        }
+        return false;
+    }
 
     /**
      * Formats a tag display string based on player's color preferences.

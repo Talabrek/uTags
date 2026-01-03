@@ -67,8 +67,9 @@ public class TagCommand implements CommandExecutor, TabCompleter {
                         player.sendMessage(ChatColor.RED + "You don't have permission to use this tag.");
                         return true;
                     }
-                    plugin.setPlayerTag(player, plugin.getTagDisplayByName(args[1]), TagType.PREFIX);
-                    player.sendMessage(ChatColor.GREEN + "Your " + TagType.PREFIX + " has been updated to: " + ChatColor.translateAlternateColorCodes('&', plugin.getTagDisplayByName(args[1])));
+                    plugin.setPlayerTag(player, args[1], TagType.PREFIX);
+                    String tagDisplay = plugin.getTagDisplayByName(args[1]);
+                    player.sendMessage(ChatColor.GREEN + "Your " + TagType.PREFIX + " has been updated to: " + ChatColor.translateAlternateColorCodes('&', tagDisplay != null ? tagDisplay : args[1]));
                 } else {
                     player.sendMessage(ChatColor.RED + "Invalid usage. Use /tag help for a list of available commands.");
                 }
