@@ -76,10 +76,25 @@ public class LoginListener implements Listener {
             if (user != null) {
                 String currentPrefix = user.getCachedData().getMetaData().getPrefix();
                 if (currentPrefix != null && currentPrefix.length() > 2) {
-                    // Assume the last 2 chars are the color code added by this plugin
-                    String potentialDisplay = currentPrefix.substring(0, currentPrefix.length() - 2);
+                    // Check if the last 2 characters form a valid color code (§X or &X where X is 0-9a-fA-F)
+                    String potentialDisplay = null;
+                    int prefixLen = currentPrefix.length();
+                    char potentialColorChar = currentPrefix.charAt(prefixLen - 2);
+                    char potentialCodeChar = currentPrefix.charAt(prefixLen - 1);
+
+                    // Validate the trailing color code pattern
+                    if ((potentialColorChar == ChatColor.COLOR_CHAR || potentialColorChar == '&')
+                            && "0123456789abcdefABCDEFkKlLmMnNoOrR".indexOf(potentialCodeChar) != -1) {
+                        // Valid color code found at the end, extract display without it
+                        potentialDisplay = currentPrefix.substring(0, prefixLen - 2);
+                    } else {
+                        // No valid trailing color code, use the full prefix as potential display
+                        potentialDisplay = currentPrefix;
+                    }
+
                     // Check if this display string corresponds to a known tag
-                    plugin.getTagNameByDisplayAsync(potentialDisplay).thenAcceptAsync(tagName -> {
+                    final String finalPotentialDisplay = potentialDisplay;
+                    plugin.getTagNameByDisplayAsync(finalPotentialDisplay).thenAcceptAsync(tagName -> {
                         if (tagName != null) {
                             // Store the mapping
                             plugin.playerAppliedPrefixTagName.put(playerUuid, tagName);
