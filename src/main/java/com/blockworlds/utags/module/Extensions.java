@@ -1,6 +1,7 @@
 package com.blockworlds.utags.module;
 
 import com.blockworlds.utags.Tag;
+import com.blockworlds.utags.spi.CommandExtension;
 import com.blockworlds.utags.spi.DisplayDecorator;
 import com.blockworlds.utags.spi.MenuExtension;
 import com.blockworlds.utags.spi.MenuOpenerOverride;
@@ -24,6 +25,8 @@ public final class Extensions {
     private final List<MenuOpenerOverride> openers = new CopyOnWriteArrayList<>();
     private final List<StorageExtension> storage = new CopyOnWriteArrayList<>();
     private final List<PackContributor> packs = new CopyOnWriteArrayList<>();
+    private final List<CommandExtension> commands = new CopyOnWriteArrayList<>();
+    private final List<com.blockworlds.utags.spi.OutputTransformer> outputs = new CopyOnWriteArrayList<>();
 
     public void add(DisplayDecorator d) { decorators.add(d); }
 
@@ -34,6 +37,26 @@ public final class Extensions {
     public void add(StorageExtension s) { storage.add(s); }
 
     public void add(PackContributor p) { packs.add(p); }
+
+    public void add(CommandExtension c) { commands.add(c); }
+
+    public void add(com.blockworlds.utags.spi.OutputTransformer o) { outputs.add(o); }
+
+    /** Runs the output transformers in order; a failing one is skipped. */
+    public String transformOutput(java.util.UUID player, Tag tag, boolean prefix, String text) {
+        String result = text;
+        for (com.blockworlds.utags.spi.OutputTransformer o : outputs) {
+            try {
+                String next = o.transform(player, tag, prefix, result);
+                if (next != null) result = next;
+            } catch (RuntimeException e) {
+                // a broken transformer must not stop the tag from being written
+            }
+        }
+        return result;
+    }
+
+    public List<CommandExtension> commands() { return List.copyOf(commands); }
 
     public List<MenuExtension> menus() { return List.copyOf(menus); }
 
@@ -49,9 +72,14 @@ public final class Extensions {
 
     /** Runs the decorators in priority order. */
     public Component decorate(Component tag, Tag def, Player viewer, DisplayDecorator.Context context) {
+        return decorate(tag, def, null, viewer, context);
+    }
+
+    /** Runs every decorator in priority order; {@code wearer} is whose tag it is (null when unknown). */
+    public Component decorate(Component tag, Tag def, java.util.UUID wearer, Player viewer, DisplayDecorator.Context context) {
         Component result = tag;
         for (DisplayDecorator d : decorators.stream().sorted(Comparator.comparingInt(DisplayDecorator::priority)).toList()) {
-            result = d.decorate(result, def, viewer, context);
+            result = d.decorate(result, def, wearer, viewer, context);
         }
         return result;
     }

@@ -41,6 +41,9 @@ public final class UTagsApiImpl implements UTagsApi {
     private final ColorPreferences colors;
     private final CompletableFuture<Void> ready;
     private volatile Consumer<Player> menuOpener;
+    private volatile java.util.function.Supplier<Edition> edition = () -> Edition.FREE;
+    private volatile com.blockworlds.utags.module.Extensions extensions;
+    private volatile java.util.function.Supplier<Optional<PackAssets>> packAssets = Optional::empty;
 
     /**
      * @param ready      completes once the schema exists and the ledger is attached; the service is registered before
@@ -62,7 +65,7 @@ public final class UTagsApiImpl implements UTagsApi {
 
     @Override
     public Edition edition() {
-        return Edition.FREE;
+        return edition.get();
     }
 
     @Override
@@ -132,17 +135,37 @@ public final class UTagsApiImpl implements UTagsApi {
         Component prefixPart = prefix == null ? Component.empty() : DisplayService.component(
                 DisplayService.formatTagDisplayWithColor(prefix.getDisplay(), colors.tagPreference(player, prefix.getName())));
         Component suffixPart = suffix == null ? Component.empty() : DisplayService.component(suffix.getDisplay());
+        com.blockworlds.utags.module.Extensions ext = extensions;
+        if (ext != null) {
+            if (prefix != null) prefixPart = ext.decorate(prefixPart, prefix, player, null, com.blockworlds.utags.spi.DisplayDecorator.Context.API);
+            if (suffix != null) suffixPart = ext.decorate(suffixPart, suffix, player, null, com.blockworlds.utags.spi.DisplayDecorator.Context.API);
+        }
         return new TagDisplay(prefixPart, suffixPart);
     }
 
     @Override
     public Optional<PackAssets> packAssets() {
-        return Optional.empty();
+        return packAssets.get();
+    }
+
+    /** Where {@link #packAssets()} comes from (uTags Pro's pack builder); empty in the free edition. */
+    public void setPackAssets(java.util.function.Supplier<Optional<PackAssets>> packAssets) {
+        this.packAssets = packAssets;
     }
 
     @Override
     public void openMenu(Player player) {
         menuOpener.accept(player);
+    }
+
+    /** Where {@link #edition()} comes from (the main class: PRO once a Pro module is enabled). */
+    public void setEdition(java.util.function.Supplier<Edition> edition) {
+        this.edition = edition;
+    }
+
+    /** The display decorators {@link #display} runs (context API, no single viewer). */
+    public void setExtensions(com.blockworlds.utags.module.Extensions extensions) {
+        this.extensions = extensions;
     }
 
     /** Lets another part (the Bedrock forms) take over {@link #openMenu}; it must fall back to the Java menu itself. */

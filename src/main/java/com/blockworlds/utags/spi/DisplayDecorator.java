@@ -4,6 +4,8 @@ import com.blockworlds.utags.Tag;
 import net.kyori.adventure.text.Component;
 import org.bukkit.entity.Player;
 
+import java.util.UUID;
+
 /**
  * Pro extension point: changes how a tag looks (a badge glyph in front, a gradient, a hover text) for one viewer in
  * one place. Decorators run in {@link #priority} order (low first), each on the previous one's result, on the thread
@@ -21,6 +23,16 @@ public interface DisplayDecorator {
      * @param viewer who sees it; null when there is no single viewer (the API, console)
      */
     Component decorate(Component tag, Tag def, Player viewer, Context context);
+
+    /**
+     * The same, also told whose tag it is. uTags calls this one; override it when the result depends on the wearer
+     * (an edition number, a live stat). The default ignores the wearer.
+     *
+     * @param wearer the player who wears the tag; null when unknown
+     */
+    default Component decorate(Component tag, Tag def, UUID wearer, Player viewer, Context context) {
+        return decorate(tag, def, viewer, context);
+    }
 
     /** Lower runs first. */
     default int priority() {

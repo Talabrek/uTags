@@ -44,6 +44,7 @@ public final class SelectionService {
     private final Logger log;
     private final SelectionCache cache = new SelectionCache();
     private final ChangeFeed changes;
+    private volatile com.blockworlds.utags.module.Extensions extensions;
     private volatile SelectWriter writer = (c, player, prefix, tag, permissionOwned) -> {
         SelectionStore.set(c, player, prefix, tag);
         return true;
@@ -68,6 +69,16 @@ public final class SelectionService {
         this.changes = changes;
         changes.subscribe(ChangeFeed.Kind.SELECTION, who -> onRemote(who, false));
         changes.subscribe(ChangeFeed.Kind.COLORS, who -> onRemote(who, true));
+    }
+
+    /** The output transformers to run on the LuckPerms text (set by the main class once the registry exists). */
+    public void setExtensions(com.blockworlds.utags.module.Extensions extensions) {
+        this.extensions = extensions;
+    }
+
+    private String output(UUID player, Tag tag, boolean prefix, String text) {
+        com.blockworlds.utags.module.Extensions ext = extensions;
+        return ext == null ? text : ext.transformOutput(player, tag, prefix, text);
     }
 
     /** The ledger installs its locked write, so a select cannot cross a revoke of the same tag. */
@@ -171,7 +182,7 @@ public final class SelectionService {
                 replacePrefix(user, tag, "&" + colors.nameColor(uuid).getChar());
             } else {
                 user.data().clear(NodeType.SUFFIX.predicate()); // a suffix pick replaces every suffix, as in 1.3.0
-                user.data().add(SuffixNode.builder(DisplayService.toLegacy(tag.getDisplay()), PRIORITY).build());
+                user.data().add(SuffixNode.builder(output(uuid, tag, false, DisplayService.toLegacy(tag.getDisplay())), PRIORITY).build());
             }
             return luckPerms.getUserManager().saveUser(user);
         }).whenComplete((v, ex) -> {
@@ -218,7 +229,7 @@ public final class SelectionService {
             boolean changed = false;
             if (prefixTag != null) changed |= replacePrefix(user, prefixTag, nameColorCode);
             if (suffixTag != null) {
-                String wanted = DisplayService.toLegacy(suffixTag.getDisplay());
+                String wanted = output(uuid, suffixTag, false, DisplayService.toLegacy(suffixTag.getDisplay()));
                 boolean present = user.getNodes(NodeType.SUFFIX).stream()
                         .anyMatch(n -> n instanceof SuffixNode s && s.getPriority() == PRIORITY && wanted.equals(s.getMetaValue()));
                 if (!present) {
@@ -312,7 +323,7 @@ public final class SelectionService {
     /** Replaces the priority-10000 prefix node with the tag's; false when it already holds that value. */
     private boolean replacePrefix(User user, Tag tag, String nameColorCode) {
         PlayerTagColorPreference pref = colors.tagPreference(user.getUniqueId(), tag.getName());
-        String wanted = DisplayService.lpPrefix(tag.getDisplay(), pref, nameColorCode);
+        String wanted = output(user.getUniqueId(), tag, true, DisplayService.lpPrefix(tag.getDisplay(), pref, nameColorCode));
         PrefixNode existing = null;
         for (Node node : user.getNodes(NodeType.PREFIX)) {
             if (node instanceof PrefixNode p && p.getPriority() == PRIORITY) {

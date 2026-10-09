@@ -255,7 +255,9 @@ public class TagMenuManager {
                     PlayerTagColorPreference preference = plugin.colors().tagPreference(player.getUniqueId(), tag.getName());
                     String formattedDisplay = com.blockworlds.utags.display.DisplayService.formatTagDisplayWithColor(tag.getDisplay(), preference);
                     String display = ChatColor.translateAlternateColorCodes('&', formattedDisplay);
-                    tagMeta.displayName(Text.c(display));
+                    // decorators (Pro badges, edition numbers) see the menu too; with none installed this is Text.c(display)
+                    tagMeta.displayName(plugin.extensions().decorate(Text.c(display), tag, player.getUniqueId(), player,
+                            com.blockworlds.utags.spi.DisplayDecorator.Context.MENU));
 
                     List<String> lore = new ArrayList<>();
                     lore.add(" "); // Spacer

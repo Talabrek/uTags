@@ -97,7 +97,7 @@ tasks.named("assemble") { finalizedBy(writeChecksums) }
 
 // ---- this plugin ----
 group = "com.blockworlds"
-version = "1.4.0"
+version = "1.4.1"
 description = "Tags that players can display in chat"
 
 repositories {

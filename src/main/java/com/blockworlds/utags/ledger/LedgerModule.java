@@ -37,6 +37,8 @@ public final class LedgerModule implements UTagsModule {
                 ctx.changes(), ctx.luckPerms());
         UTagsApiImpl impl = new UTagsApiImpl(ctx.database(), ctx.tags(), service, ownership, ctx.selection(), ctx.colors(),
                 ready, p -> plugin.getTagMenuManager().openTagMenu(p));
+        impl.setEdition(plugin::edition);
+        impl.setExtensions(ctx.extensions());
         ctx.selection().useWriter(store::select); // selects take the player lock, like revokes
         Bukkit.getPluginManager().registerEvents(ownership, plugin);
         ownership.subscribe(ctx.changes());
@@ -44,7 +46,7 @@ public final class LedgerModule implements UTagsModule {
         // wait on ready, which completes once the migrations ran and the ledger is attached.
         Bukkit.getServicesManager().register(UTagsApi.class, impl, plugin, ServicePriority.Normal);
         this.api = impl;
-        ctx.logger().info("uTags API " + UTagsApi.VERSION + " registered (free edition).");
+        ctx.logger().info("uTags API " + UTagsApi.VERSION + " registered.");
         ctx.storageReady().whenComplete((v, ex) -> {
             if (ex != null) {
                 ready.completeExceptionally(ex);

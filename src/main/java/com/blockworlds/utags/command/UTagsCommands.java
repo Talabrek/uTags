@@ -100,7 +100,11 @@ public final class UTagsCommands {
                         .then(Commands.argument("extra", StringArgumentType.greedyString())
                                 .executes(ctx -> tagRun(ctx, p -> tag.nameColor(p, null))))));
 
-        root.then(adminTree());
+        LiteralArgumentBuilder<CommandSourceStack> admin = adminTree();
+        if (plugin != null) {
+            for (com.blockworlds.utags.spi.CommandExtension e : plugin.extensions().commands()) e.extend(root, admin);
+        }
+        root.then(admin);
 
         // Anything else under /tag
         root.then(Commands.argument("anything", StringArgumentType.greedyString())

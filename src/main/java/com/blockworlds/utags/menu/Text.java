@@ -14,8 +14,9 @@ import java.util.List;
  */
 public final class Text {
 
+    // no extractUrls(): item text cannot be clicked, and it turned prices such as "100.00" into links
     private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.builder()
-            .character('\u00a7').extractUrls().build();
+            .character('\u00a7').build();
     private static final LegacyComponentSerializer AMPERSAND = LegacyComponentSerializer.legacyAmpersand();
 
     private Text() {

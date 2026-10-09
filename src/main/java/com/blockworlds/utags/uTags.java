@@ -91,6 +91,7 @@ public class uTags extends JavaPlugin {
         colors = new ColorPreferences(database, changes());
         display = new DisplayService(this, luckPerms);
         selection = new SelectionService(this, database, tags, colors, display, luckPerms, changes());
+        selection.setExtensions(extensions);
         requestMenus = new RequestMenus(this);
         ownership = new Ownership(luckPerms, getLogger());
 
@@ -121,11 +122,22 @@ public class uTags extends JavaPlugin {
      * after the services exist and before the database is migrated, so a module can register its storage extension.
      */
     private List<UTagsModule> modules() {
-        return List.of(
+        List<UTagsModule> all = new ArrayList<>(List.of(
                 new LedgerModule(),
                 new SyncModule(),
                 new com.blockworlds.utags.bedrock.BedrockModule(),
-                new com.blockworlds.utags.unlock.UnlockModule());
+                new com.blockworlds.utags.unlock.UnlockModule()));
+        // uTags Pro lists its modules in META-INF/services/com.blockworlds.utags.module.UTagsModule; the free jar has none
+        for (UTagsModule extra : java.util.ServiceLoader.load(UTagsModule.class, getClassLoader())) all.add(extra);
+        return all;
+    }
+
+    /** PRO when a uTags Pro module is enabled. */
+    public com.blockworlds.utags.api.Edition edition() {
+        for (UTagsModule m : enabledModules) {
+            if (m.edition() == com.blockworlds.utags.api.Edition.PRO) return com.blockworlds.utags.api.Edition.PRO;
+        }
+        return com.blockworlds.utags.api.Edition.FREE;
     }
 
     private void enableModules() {

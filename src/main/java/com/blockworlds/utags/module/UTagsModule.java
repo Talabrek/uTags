@@ -1,5 +1,7 @@
 package com.blockworlds.utags.module;
 
+import com.blockworlds.utags.api.Edition;
+
 /**
  * A part of uTags that wires itself in (ledger, sync, Bedrock, unlocks, later Pro). The main class enables an
  * ordered list of modules, one line each; a module that throws in {@link #enable} is logged and skipped, it does not
@@ -14,5 +16,10 @@ public interface UTagsModule {
     void enable(UTagsContext ctx);
 
     default void disable() {
+    }
+
+    /** PRO for the modules of uTags Pro; any enabled PRO module makes {@code UTagsApi.edition()} answer PRO. */
+    default Edition edition() {
+        return Edition.FREE;
     }
 }

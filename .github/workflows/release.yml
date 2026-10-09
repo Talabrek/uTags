@@ -31,4 +31,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           jars=$(ls build/libs/*.jar | grep -v -- '-plain.jar')
-          gh release create "$GITHUB_REF_NAME" $jars build/libs/*.sha256 --title "$GITHUB_REF_NAME" --generate-notes
+          sums=$(ls build/libs/*.sha256 | grep -v -- '-plain.jar.sha256')
+          gh release create "$GITHUB_REF_NAME" $jars $sums --title "$GITHUB_REF_NAME" --generate-notes
