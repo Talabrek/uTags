@@ -120,8 +120,11 @@ public final class SyncEngine implements AutoCloseable {
         }
     }
 
-    /** Inserts everything queued, in one batch. */
-    void flush() throws SQLException {
+    /**
+     * Inserts everything queued, in one batch. Synchronized so a caller's flush waits for one already running on the
+     * engine thread: once it returns, everything published before the call is in the table.
+     */
+    synchronized void flush() throws SQLException {
         List<Pending> batch = new ArrayList<>();
         for (Pending p; (p = queue.poll()) != null; ) batch.add(p);
         if (batch.isEmpty()) return;
