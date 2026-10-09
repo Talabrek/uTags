@@ -3,14 +3,23 @@
 # Default tag for new players
 default-tag: "member"
 
-# Database Configuration
-database:
-  host: "localhost"
-  port: 3306
-  database: "utags"
-  username: "user"
-  password: "password"
-  schema: 3 # Note: Schema version might need updating if DB structure changed significantly
+# --- Storage ---
+# sqlite (the default): one file, plugins/UTags/utags.db, nothing to set up.
+# mysql: needed to share tags between several servers; fill in the database section below and set type: mysql.
+# (A config that has no storage.type but already has database.host keeps using MySQL.)
+storage:
+  type: sqlite
+  sqlite:
+    file: "utags.db"
+
+# MySQL / MariaDB connection, used only when storage.type is mysql.
+# Leave this section commented out for SQLite.
+#database:
+#  host: "localhost"
+#  port: 3306
+#  database: "utags"
+#  username: "user"
+#  password: "password"
 
 # --- GUI Configuration ---
 frame-material: BLACK_STAINED_GLASS_PANE
@@ -54,25 +63,25 @@ gui:
     # Placeholders: %slot_number%
     locked:
       lore:
-        - "&7Unlock this slot by ranking up"
-        - "&7or visiting the server store."
+        - "&7This slot is locked."
+        - "&7Ask a server admin to unlock it."
 
 # Command configuration for notifications (optional)
-accept-command: "mail send %player% Your custom tag request has been accepted!"
-deny-command: "mail send %player% Your custom tag request has been denied."
+accept-command: ""  # e.g. "mail send %player% Your custom tag request has been accepted!" (needs a mail plugin)
+deny-command: ""  # e.g. "mail send %player% Your custom tag request has been denied."
 
 # --- Name Color Configuration ---
 # Define available name colors and their corresponding permissions (utags.namecolor.<key>)
 # Example: A player needs 'utags.namecolor.light_blue' to use the Light Blue color.
 name-colors:
-  Light Blue: "&b"
+  Light Blue: "&b" # Renamed from Aqua, uses &b
   Green: "&a"
   Red: "&c"
   Yellow: "&e"
   Gold: "&6"
-  Aqua: "&b"
-  Dark Aqua: "&3"
-  Dark Blue: "&1"
+  # Removed Aqua: "&b" to avoid duplication with Light Blue/Blue
+  Cyan: "&3" # Renamed from Dark Aqua
+  Dark Blue: "&1" # Kept as Dark Blue
   Dark Gray: "&8"
   Dark Green: "&2"
   Dark Purple: "&5"
@@ -80,6 +89,7 @@ name-colors:
   Gray: "&7"
   Light Purple: "&d"
   White: "&f"
+  Blue: "&9" # Added Blue (&9)
   # Add more colors as needed
 
 
@@ -90,3 +100,38 @@ messages:
   namecolor_invalid_color: "&cInvalid color code. Use & followed by 0-9 or a-f, or use 'reset'."
   namecolor_reset_success: "&aYour name color has been reset to default."
   namecolor_success: "&aYour name color has been set to {color}&a."
+  tag-color-no-permission: "&cYou do not have permission to change tag colors."
+
+# --- Network sync ---
+# Only on MySQL: servers sharing the database tell each other about changes to tags, selections and colours,
+# so an edit on one server shows on the others within a few seconds (the 60 s tag reload stays as a fallback).
+sync:
+  enabled: true
+  poll-seconds: 3
+
+# --- Bedrock players ---
+# With Floodgate installed, Bedrock players get native forms instead of chest menus for the tag menu, the prefix and
+# suffix pickers, tag options, tag colors, name colors and custom tag requests. Admin menus stay chest menus.
+bedrock:
+  forms: true
+
+# --- Earned unlocks ---
+# Grants a tag when a player meets a condition. Checked shortly after a player joins and every check-minutes for
+# everyone online. A grant is recorded once (source unlock:<id>) and never taken back. Rule ids use a-z 0-9 _ . -
+# Rules go in the "rules" list. Each rule needs an id, a tag (an existing tag id) and exactly one condition under "when":
+#   permission: <node>                    the player has this permission
+#   playtime-hours: <n>                   time played (Minecraft play-time statistic)
+#   advancement: <key>                    a completed advancement, such as minecraft:story/mine_diamond
+#   placeholder: "%papi% >= <n>"          a PlaceholderAPI value compared with > >= < <= ==
+unlocks:
+  check-minutes: 5
+  rules: []
+  # Example rules (move them up to "rules:" and remove the [] to use them):
+  #   - id: veteran
+  #     tag: veteran
+  #     when:
+  #       playtime-hours: 100
+  #   - id: diamonds
+  #     tag: diamond_finder
+  #     when:
+  #       advancement: minecraft:story/mine_diamond

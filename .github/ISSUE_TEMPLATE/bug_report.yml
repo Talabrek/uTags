@@ -1,0 +1,42 @@
+name: Bug report
+description: Something in uTags does not work as expected
+labels: [bug]
+body:
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: The version in the jar name or in /version uTags
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: Server software and version
+      description: For example Paper 1.21.4 build 100, Purpur 1.21.4, Spigot 1.20.6
+      placeholder: Paper 1.21.4
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you saw, and what you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The relevant part of latest.log, or a link to it (a paste site is fine). Remove passwords first.
+      render: text

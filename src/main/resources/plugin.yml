@@ -1,32 +1,27 @@
 name: UTags
 version: '${project.version}'
 main: com.blockworlds.utags.uTags
-api-version: 1.19
+api-version: '1.21'
 authors: [ Talabrek ]
 description: Tags that players can display in chat
 website: blockworlds.com
 
 depend:
   - LuckPerms
+softdepend:
+  - floodgate
+  - PlaceholderAPI
 
-commands:
-  tag:
-    description: Opens the tag menu or sends a custom tag request
-    usage: /<command> [request] [tag]
-    permission: utags.tag
-    permission-message: You don't have permission to use this command.
-  name: # Changed command name
-    description: Opens the name color selection menu.
-    usage: /<command>
-    permission: utags.name.gui # Changed permission node
-    permission-message: You don't have permission to change your name color.
-
+# /tag and /name are registered with Paper Brigadier (command.UTagsCommands), not declared here.
 permissions:
   utags.tag:
     description: Allows the player to use the /tag command
     default: true
-  utags.tagcolor:
-    description: Allows the player to change the color of their tag
+  utags.color.change:
+    description: Allows the player to change the colors of colorable tags
+    default: false
+  utags.command.namecolor:
+    description: Allows the player to use /tag namecolor
     default: false
   utags.name.gui: # Changed permission node
     description: Allows the player to use the /name command to open the GUI.

@@ -37,7 +37,7 @@ public class LuckPermsListener {
             // No delay needed here, as the event signifies data is ready
             Bukkit.getScheduler().runTask(plugin, () -> {
                 // Pass null for the prefix; the refresh method will fetch the latest from cache
-                plugin.refreshBukkitDisplayName(player);
+                plugin.display().refreshDisplayName(player);
             });
         } else {
              plugin.getLogger().finest("LuckPerms UserDataRecalculateEvent detected for offline/unknown user: " + user.getUniqueId());
